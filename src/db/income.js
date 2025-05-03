@@ -1,47 +1,27 @@
 import supabase from "./supabase";
 
-// Function to fetch income entries with pagination and filters
-export const fetchIncome = async (filters = {}) => {
+// Function to fetch income entries with pagination and search
+export const fetchIncome = async (period = null, filters = {}) => {
   try {
     const {
       page = 1,
       limit = 10,
-      startDate,
-      endDate,
-      category,
-      search,
-      minAmount,
-      maxAmount,
-      recurring
+      search
     } = filters;
 
     let query = supabase
       .from('income')
       .select('*', { count: 'exact' });
 
-    // Apply filters
-    if (startDate && endDate) {
-      query = query.gte('date', startDate).lte('date', endDate);
+    // Filter by period if provided
+    if (period) {
+      const { periodStart, periodEnd } = getPeriodDates(period);
+      query = query.gte('date', periodStart).lte('date', periodEnd);
     }
 
-    if (category && category !== 'All Categories') {
-      query = query.eq('category', category);
-    }
-
-    if (search) {
+    // Apply search filter
+    if (search && search.trim() !== '') {
       query = query.or(`source.ilike.%${search}%,description.ilike.%${search}%`);
-    }
-
-    if (minAmount) {
-      query = query.gte('amount', minAmount);
-    }
-
-    if (maxAmount) {
-      query = query.lte('amount', maxAmount);
-    }
-
-    if (recurring !== undefined) {
-      query = query.eq('recurring', recurring);
     }
 
     // Calculate pagination
@@ -67,9 +47,16 @@ export const fetchIncome = async (filters = {}) => {
 // Function to add new income entry
 export const addIncome = async (income) => {
   try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('User not authenticated');
+
+    const incomeWithUserId = {
+      ...income,
+      user_id: user.id
+    };
     const { data, error } = await supabase
       .from('income')
-      .insert([income]);
+      .insert([incomeWithUserId]);
 
     if (error) {
       throw error;
@@ -120,95 +107,58 @@ export const deleteIncome = async (id) => {
   }
 };
 
-// Function to get income summary
-export const getIncomeSummary = async (period = 'month') => {
+// Function to get income summary for a specific period
+export const getIncomeSummary = async (period) => {
   try {
-    const now = new Date();
-    let startDate, endDate;
-    
-    // Calculate date range based on period
-    if (period === 'month') {
-      // Current month
-      startDate = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
-      endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
-    } else if (period === 'last_month') {
-      // Last month
-      startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().split('T')[0];
-      endDate = new Date(now.getFullYear(), now.getMonth(), 0).toISOString().split('T')[0];
-    } else if (period === '6months') {
-      // Last 6 months
-      startDate = new Date(now.getFullYear(), now.getMonth() - 6, 1).toISOString().split('T')[0];
-      endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
-    }
+    // Get date range for the specified period
+    const { periodStart, periodEnd } = getPeriodDates(period);
 
     // Get total income for current period
     const { data: currentData, error: currentError } = await supabase
       .from('income')
-      .select('amount, recurring')
-      .gte('date', startDate)
-      .lte('date', endDate);
+      .select('amount, recurring, date')
+      .gte('date', periodStart)
+      .lte('date', periodEnd);
 
     if (currentError) throw currentError;
 
     // Calculate total and recurring income
-    const totalIncome = currentData.reduce((sum, item) => sum + item.amount, 0);
+    const totalIncome = currentData.reduce((sum, item) => sum + parseFloat(item.amount), 0);
     const recurringIncome = currentData
       .filter(item => item.recurring)
-      .reduce((sum, item) => sum + item.amount, 0);
+      .reduce((sum, item) => sum + parseFloat(item.amount), 0);
 
-    // Get average monthly income (last 6 months)
-    let averageMonthlyIncome = 0;
+    // Get previous period dates
+    const previousPeriod = getPreviousPeriod(period, getPeriodType(period));
+    const { periodStart: prevStart, periodEnd: prevEnd } = getPeriodDates(previousPeriod);
+
+    // Get previous period data for growth calculation
+    const { data: previousData, error: previousError } = await supabase
+      .from('income')
+      .select('amount')
+      .gte('date', prevStart)
+      .lte('date', prevEnd);
     
-    if (period === '6months') {
-      // If we already have 6 months data, calculate average
-      averageMonthlyIncome = totalIncome / 6;
-    } else {
-      // Otherwise fetch 6 months data for average
-      const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 6, 1).toISOString().split('T')[0];
-      
-      const { data: sixMonthData, error: sixMonthError } = await supabase
-        .from('income')
-        .select('amount, date')
-        .gte('date', sixMonthsAgo)
-        .lte('date', endDate);
-      
-      if (sixMonthError) throw sixMonthError;
-      
-      // Group by month and calculate average
-      const monthlyTotals = {};
-      
-      sixMonthData.forEach(item => {
-        const month = item.date.substring(0, 7); // YYYY-MM format
-        monthlyTotals[month] = (monthlyTotals[month] || 0) + item.amount;
-      });
-      
-      const months = Object.keys(monthlyTotals);
-      const totalMonthlyIncome = Object.values(monthlyTotals).reduce((sum, amount) => sum + amount, 0);
-      averageMonthlyIncome = totalMonthlyIncome / (months.length || 1);
+    if (previousError) throw previousError;
+    
+    const previousTotal = previousData.reduce((sum, item) => sum + parseFloat(item.amount), 0);
+    
+    // Calculate growth percentage
+    let growthPercentage = 0;
+    if (previousTotal > 0) {
+      growthPercentage = ((totalIncome - previousTotal) / previousTotal) * 100;
     }
 
-    // Calculate growth percentage compared to previous period
-    let growthPercentage = 0;
+    // Calculate average monthly income if we're looking at a period longer than a month
+    let averageMonthlyIncome = totalIncome;
+    const periodType = getPeriodType(period);
     
-    if (period === 'month' || period === 'last_month') {
-      const previousPeriodStart = new Date(now.getFullYear(), now.getMonth() - (period === 'month' ? 1 : 2), 1)
-        .toISOString().split('T')[0];
-      const previousPeriodEnd = new Date(now.getFullYear(), now.getMonth() - (period === 'month' ? 0 : 1), 0)
-        .toISOString().split('T')[0];
-      
-      const { data: previousData, error: previousError } = await supabase
-        .from('income')
-        .select('amount')
-        .gte('date', previousPeriodStart)
-        .lte('date', previousPeriodEnd);
-      
-      if (previousError) throw previousError;
-      
-      const previousTotal = previousData.reduce((sum, item) => sum + item.amount, 0);
-      
-      if (previousTotal > 0) {
-        growthPercentage = ((totalIncome - previousTotal) / previousTotal) * 100;
-      }
+    if (periodType === 'quarterly') {
+      // Divide by roughly 3 months for quarterly view
+      averageMonthlyIncome = totalIncome / 3;
+    } else if (periodType === 'yearly') {
+      // Divide by 12 months for yearly view
+      averageMonthlyIncome = totalIncome / 12;
     }
 
     return {
@@ -216,7 +166,9 @@ export const getIncomeSummary = async (period = 'month') => {
       recurringIncome,
       recurringPercentage: totalIncome > 0 ? (recurringIncome / totalIncome) * 100 : 0,
       averageMonthlyIncome,
-      growthPercentage
+      growthPercentage,
+      period,
+      periodType
     };
   } catch (error) {
     console.error('Error fetching income summary:', error);
@@ -225,13 +177,20 @@ export const getIncomeSummary = async (period = 'month') => {
 };
 
 // Function to export income data to CSV
-export const exportIncomeToCSV = async (filters = {}) => {
+export const exportIncomeToCSV = async (period = null) => {
   try {
-    // Fetch all data without pagination
-    const { data, error } = await supabase
+    let query = supabase
       .from('income')
       .select('*')
       .order('date', { ascending: false });
+      
+    // Filter by period if provided
+    if (period) {
+      const { periodStart, periodEnd } = getPeriodDates(period);
+      query = query.gte('date', periodStart).lte('date', periodEnd);
+    }
+    
+    const { data, error } = await query;
 
     if (error) throw error;
 
@@ -255,4 +214,146 @@ export const exportIncomeToCSV = async (filters = {}) => {
     console.error('Error exporting income data:', error);
     throw error;
   }
+};
+
+// Helper function to get date range for a period (same as in budgets.js)
+export const getPeriodDates = (period) => {
+  const now = new Date();
+  let periodStart, periodEnd;
+  
+  // Parse period string: "April 2025", "Q2 2025", "2025"
+  if (period.includes('Q')) {
+    // Quarterly
+    const [quarter, year] = period.replace('Q', '').split(' ');
+    const quarterStartMonth = (parseInt(quarter) - 1) * 3;
+    periodStart = new Date(parseInt(year), quarterStartMonth, 1);
+    periodEnd = new Date(parseInt(year), quarterStartMonth + 3, 0);
+  } else if (period.match(/^\d{4}$/)) {
+    // Yearly
+    const year = parseInt(period);
+    periodStart = new Date(year, 0, 1);
+    periodEnd = new Date(year, 11, 31);
+  } else {
+    // Monthly
+    const [month, year] = period.split(' ');
+    const monthIndex = getMonthIndex(month);
+    periodStart = new Date(parseInt(year), monthIndex, 1);
+    periodEnd = new Date(parseInt(year), monthIndex + 1, 0);
+  }
+  
+  return {
+    periodStart: periodStart.toISOString().split('T')[0],
+    periodEnd: periodEnd.toISOString().split('T')[0]
+  };
+};
+
+// Get month index from name (same as in budgets.js)
+const getMonthIndex = (monthName) => {
+  const months = [
+    'January', 'February', 'March', 'April', 'May', 'June', 
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ];
+  return months.findIndex(m => m.startsWith(monthName));
+};
+
+// Get formatted period options (same as in budgets.js)
+export const getPeriodOptions = () => {
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth();
+  
+  // Generate 6 months before and after current month
+  const monthOptions = [];
+  for (let i = -6; i <= 6; i++) {
+    const monthDate = new Date(currentYear, currentMonth + i, 1);
+    const monthName = monthDate.toLocaleString('default', { month: 'long' });
+    const year = monthDate.getFullYear();
+    monthOptions.push(`${monthName} ${year}`);
+  }
+  
+  // Generate quarterly options
+  const quarterOptions = [];
+  for (let year = currentYear - 1; year <= currentYear + 1; year++) {
+    for (let quarter = 1; quarter <= 4; quarter++) {
+      quarterOptions.push(`Q${quarter} ${year}`);
+    }
+  }
+  
+  // Generate yearly options
+  const yearOptions = [];
+  for (let year = currentYear - 2; year <= currentYear + 2; year++) {
+    yearOptions.push(`${year}`);
+  }
+  
+  return {
+    monthly: monthOptions,
+    quarterly: quarterOptions,
+    yearly: yearOptions
+  };
+};
+
+// Get previous period (same as in budgets.js)
+export const getPreviousPeriod = (currentPeriod, periodType = 'monthly') => {
+  if (periodType === 'monthly') {
+    const [month, year] = currentPeriod.split(' ');
+    const monthIndex = getMonthIndex(month);
+    const date = new Date(parseInt(year), monthIndex - 1, 1);
+    return `${date.toLocaleString('default', { month: 'long' })} ${date.getFullYear()}`;
+  } else if (periodType === 'quarterly') {
+    const [quarter, year] = currentPeriod.replace('Q', '').split(' ');
+    const quarterNum = parseInt(quarter);
+    if (quarterNum === 1) {
+      return `Q4 ${parseInt(year) - 1}`;
+    } else {
+      return `Q${quarterNum - 1} ${year}`;
+    }
+  } else if (periodType === 'yearly') {
+    return `${parseInt(currentPeriod) - 1}`;
+  }
+  return currentPeriod;
+};
+
+// Get next period (same as in budgets.js)
+export const getNextPeriod = (currentPeriod, periodType = 'monthly') => {
+  if (periodType === 'monthly') {
+    const [month, year] = currentPeriod.split(' ');
+    const monthIndex = getMonthIndex(month);
+    const date = new Date(parseInt(year), monthIndex + 1, 1);
+    return `${date.toLocaleString('default', { month: 'long' })} ${date.getFullYear()}`;
+  } else if (periodType === 'quarterly') {
+    const [quarter, year] = currentPeriod.replace('Q', '').split(' ');
+    const quarterNum = parseInt(quarter);
+    if (quarterNum === 4) {
+      return `Q1 ${parseInt(year) + 1}`;
+    } else {
+      return `Q${quarterNum + 1} ${year}`;
+    }
+  } else if (periodType === 'yearly') {
+    return `${parseInt(currentPeriod) + 1}`;
+  }
+  return currentPeriod;
+};
+
+// Get current period (same as in budgets.js)
+export const getCurrentPeriod = (periodType = 'monthly') => {
+  const now = new Date();
+  if (periodType === 'monthly') {
+    return `${now.toLocaleString('default', { month: 'long' })} ${now.getFullYear()}`;
+  } else if (periodType === 'quarterly') {
+    const quarter = Math.floor(now.getMonth() / 3) + 1;
+    return `Q${quarter} ${now.getFullYear()}`;
+  } else if (periodType === 'yearly') {
+    return `${now.getFullYear()}`;
+  }
+  return '';
+};
+
+// Helper function to determine period type
+export const getPeriodType = (period) => {
+  if (period.includes('Q')) {
+    return 'quarterly';
+  } else if (period.match(/^\d{4}$/)) {
+    return 'yearly';
+  }
+  return 'monthly';
 };

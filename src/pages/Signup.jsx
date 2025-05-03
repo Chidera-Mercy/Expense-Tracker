@@ -11,7 +11,7 @@ const Signup = () => {
     email: '',
     password: '',
     confirmPassword: '',
-    avatar_url: null
+    avatar: null
   });
   
   // State for image preview
@@ -35,7 +35,7 @@ const Signup = () => {
     confirmPassword: Yup.string()
       .oneOf([Yup.ref('password')], 'Passwords must match')
       .required('Please confirm your password'),
-    avatar_url: Yup.mixed()
+    avatar: Yup.mixed()
   });
 
   const handleInputChange = (e) => {
@@ -61,7 +61,7 @@ const Signup = () => {
     // Store the file in the form data
     setFormData((prevState) => ({
       ...prevState,
-      avatar_url: file
+      avatar: file
     }));
   };
 
@@ -70,7 +70,7 @@ const Signup = () => {
     setImagePreview(null);
     setFormData((prevState) => ({
       ...prevState,
-      avatar_url: null
+      avatar: null
     }));
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -100,7 +100,7 @@ const Signup = () => {
         formData.lastName, 
         formData.email, 
         formData.password, 
-        formData.avatar_url
+        formData.avatar
       );
       
       if (!success) {
@@ -174,8 +174,8 @@ const Signup = () => {
               <input
                 type="file"
                 ref={fileInputRef}
-                id="avatar_url"
-                name="avatar_url"
+                id="avatar"
+                name="avatar"
                 accept="image/*"
                 onChange={handleFileChange}
                 className="hidden"

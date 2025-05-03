@@ -43,8 +43,7 @@ const Reports = () => {
       { id: 'spending-trends', name: 'Spending Trends', icon: <TrendingUp size={18} /> },
       { id: 'savings-analysis', name: 'Savings Analysis', icon: <DollarSign size={18} /> },
       { id: 'goals-progress', name: 'Financial Goals', icon: <Award size={18} /> },
-      { id: 'merchant-analysis', name: 'Top Merchants', icon: <Zap size={18} /> },
-      { id: 'custom-report', name: 'Custom Report', icon: <FileText size={18} /> }
+      { id: 'merchant-analysis', name: 'Top Merchants', icon: <Zap size={18} /> }
     ];
 
     // Initialize dates on component mount
@@ -779,109 +778,6 @@ case 'merchant-analysis':
           </div>
         </>
       )}
-    </div>
-  );
-
-case 'custom-report':
-  return (
-    <div className="bg-white p-6 rounded-lg shadow">
-      <h3 className="text-lg font-semibold mb-4">Custom Report Builder</h3>
-      <div className="bg-blue-50 p-4 rounded-lg border border-blue-100 mb-6">
-        <div className="flex items-center mb-2">
-          <FileText className="text-blue-600 mr-2" size={18} />
-          <p className="text-sm font-medium text-gray-700">Create Your Own Report</p>
-        </div>
-        <p className="text-sm text-gray-700">
-          This feature allows you to create and save custom reports based on your specific financial analysis needs.
-        </p>
-      </div>
-      
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div>
-          <h4 className="text-md font-medium mb-3">Report Parameters</h4>
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700">Report Name</label>
-              <input 
-                type="text" 
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500" 
-                placeholder="My Custom Report" 
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700">Report Type</label>
-              <select className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500">
-                <option>Expense Analysis</option>
-                <option>Income Tracking</option>
-                <option>Budget Review</option>
-                <option>Savings Progress</option>
-                <option>Category Comparison</option>
-                <option>Merchant Analysis</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700">Visualization Type</label>
-              <select className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500">
-                <option>Bar Chart</option>
-                <option>Line Chart</option>
-                <option>Pie Chart</option>
-                <option>Area Chart</option>
-                <option>Data Table</option>
-              </select>
-            </div>
-          </div>
-        </div>
-        
-        <div>
-          <h4 className="text-md font-medium mb-3">Data Selection</h4>
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700">Categories</label>
-              <select multiple className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500 h-24">
-                {categoryData.map((category, index) => (
-                  <option key={index} value={category.name}>{category.name}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700">Data Grouping</label>
-              <select className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500">
-                <option>Daily</option>
-                <option>Weekly</option>
-                <option>Monthly</option>
-                <option>Quarterly</option>
-                <option>Yearly</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700">Include Subcategories</label>
-              <div className="mt-1">
-                <label className="inline-flex items-center">
-                  <input type="checkbox" className="rounded border-gray-300 text-green-600 shadow-sm focus:border-green-500 focus:ring-green-500" />
-                  <span className="ml-2 text-sm text-gray-700">Include subcategory breakdown</span>
-                </label>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div className="mt-6 flex justify-end space-x-3">
-        <button className="px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
-          Reset
-        </button>
-        <button className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 flex items-center">
-          <Plus size={16} className="mr-1" /> Generate Report
-        </button>
-      </div>
-      
-      <div className="mt-8 bg-gray-50 p-6 rounded-lg border border-gray-200">
-        <div className="flex items-center justify-center h-40">
-          <div className="text-center">
-            <FileText className="h-12 w-12 text-gray-400 mx-auto mb-3" />
-            <p className="text-gray-500">Select parameters and generate your custom report</p>
-          </div>
-        </div>
-      </div>
     </div>
   );
 

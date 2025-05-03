@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  Search, Filter, Plus, Calendar, Download, 
-  Edit, Trash2, ArrowUpDown, ChevronDown, 
-  MoreHorizontal, X, Check, DollarSign, 
-  BarChart2, RefreshCw, Repeat, PieChart,
+  Plus, Edit, Trash2, 
+  ChevronDown, X, Check, 
+  DollarSign, RefreshCw,PieChart,
   AlertTriangle
 } from 'lucide-react';
 import { 
@@ -18,11 +17,12 @@ import {
   getPreviousPeriod
 } from '../db/budgets.js';
 import supabase from '../db/supabase.js';
+import { useCurrency } from '../CurrencyContext.jsx';
 
 const Budgets = () => {
+  const { formatAmount } = useCurrency();
   const [showAddBudget, setShowAddBudget] = useState(false);
   const [showEditBudget, setShowEditBudget] = useState(false);
-  const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
   const [budgets, setBudgets] = useState([]);
   const [categories, setCategories] = useState([]);
   const [periodType, setPeriodType] = useState('monthly');
@@ -205,20 +205,17 @@ const Budgets = () => {
     }
   };
 
-  // Open delete confirmation
   const handleDeleteClick = (id) => {
-    setDeleteTargetId(id);
-    setShowDeleteConfirmation(true);
+    if (window.confirm("Are you sure you want to delete this budget? This action cannot be undone.")) {
+      handleConfirmDelete(id);
+    }
   };
 
   // Confirm budget deletion
-  const handleConfirmDelete = async () => {
+  const handleConfirmDelete = async (id = deleteTargetId) => {
     try {
-      const { error } = await deleteBudget(deleteTargetId);
+      const { error } = await deleteBudget(id);
       if (error) throw error;
-      
-      setShowDeleteConfirmation(false);
-      setDeleteTargetId(null);
       await loadBudgets();
     } catch (err) {
       console.error("Error deleting budget:", err);
@@ -246,14 +243,16 @@ const Budgets = () => {
   };
 
   return (
-    <div className="flex-1 overflow-auto bg-gray-50">
+    <div className="flex-1 overflow-auto bg-gray-50 flex flex-col h-full">
       {/* Header */}
-      <header className="bg-white p-4 border-b shadow-sm">
+      <header className="bg-white p-6 border-b border-gray-200 shadow-sm">
         <div className="flex justify-between items-center">
-          <h1 className="text-2xl font-bold text-emerald-800">Budget Management</h1>
+          <h1 className="text-2xl font-bold text-emerald-800">Budget Management
+          <span className="ml-2 text-sm font-normal text-gray-500">Plan your budgets</span>
+          </h1>
           <button 
             onClick={() => setShowAddBudget(true)}
-            className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-md flex items-center"
+            className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-md flex items-center shadow-sm transition-colors duration-200"
           >
             <Plus size={18} className="mr-1" />
             <span>Create Budget</span>
@@ -276,9 +275,9 @@ const Budgets = () => {
 
         {/* Budget summary */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-          <div className="bg-white rounded-lg shadow-sm p-4">
+          <div className="bg-gradient-to-br from-white to-emerald-50 rounded-lg shadow-md border border-gray-100 p-4 hover:shadow-lg transition-shadow">
             <div className="text-sm text-gray-500 mb-1">Total Budget ({currentPeriod})</div>
-            <div className="text-2xl font-semibold">${budgetSummary.totalAllocated.toFixed(2)}</div>
+            <div className="text-2xl font-semibold">{formatAmount(budgetSummary.totalAllocated.toFixed(2))}</div>
             <div className="flex items-center text-sm mt-2">
               <div className="w-full bg-gray-200 rounded-full h-2">
                 <div 
@@ -290,15 +289,15 @@ const Budgets = () => {
             </div>
           </div>
           
-          <div className="bg-white rounded-lg shadow-sm p-4">
+          <div className="bg-gradient-to-br from-white to-emerald-50 rounded-lg shadow-md border border-gray-100 p-4 hover:shadow-lg transition-shadow">
             <div className="text-sm text-gray-500 mb-1">Total Spent</div>
-            <div className="text-2xl font-semibold">${budgetSummary.totalSpent.toFixed(2)}</div>
+            <div className="text-2xl font-semibold">{formatAmount(budgetSummary.totalSpent.toFixed(2))}</div>
             <div className="flex items-center text-sm mt-1 text-gray-500">
-              <span>${budgetSummary.totalRemaining.toFixed(2)} remaining</span>
+              <span>{formatAmount(budgetSummary.totalRemaining.toFixed(2))} remaining</span>
             </div>
           </div>
           
-          <div className="bg-white rounded-lg shadow-sm p-4">
+          <div className="bg-gradient-to-br from-white to-emerald-50 rounded-lg shadow-md border border-gray-100 p-4 hover:shadow-lg transition-shadow">
             <div className="text-sm text-gray-500 mb-1">Budget Status</div>
             <div className={`text-2xl font-semibold ${
               budgetSummary.budgetStatus === 'Over Budget' ? 'text-red-600' :
@@ -368,18 +367,23 @@ const Budgets = () => {
 
         {/* No budgets message */}
         {!isLoading && budgets.length === 0 && (
-          <div className="text-center p-12 bg-white rounded-lg shadow-sm">
-            <div className="text-lg font-medium text-gray-700 mb-2">No budgets found for this period</div>
-            <p className="text-gray-500">
-              Create a budget to start tracking your spending against your financial goals.
-            </p>
-            <button
-              onClick={() => setShowAddBudget(true)}
-              className="mt-4 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-md flex items-center mx-auto"
-            >
-              <Plus size={18} className="mr-1" />
-              <span>Create Your First Budget</span>
-            </button>
+          <div className="text-center p-12 bg-white rounded-lg shadow-md border border-gray-100">
+            <div className="flex flex-col items-center justify-center">
+              <div className="bg-emerald-50 p-4 rounded-full mb-4">
+                <PieChart className="h-12 w-12 text-emerald-500" />
+              </div>
+              <h3 className="text-xl font-semibold text-gray-800 mb-2">No budgets found for this period</h3>
+              <p className="text-gray-500 max-w-md mx-auto mb-6">
+                Create your first budget to start tracking your spending and achieving your financial goals.
+              </p>
+              <button
+                onClick={() => setShowAddBudget(true)}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2 rounded-md flex items-center mx-auto shadow-sm transition-colors duration-200"
+              >
+                <Plus size={18} className="mr-2" />
+                <span>Create Your First Budget</span>
+              </button>
+            </div>
           </div>
         )}
 
@@ -387,51 +391,69 @@ const Budgets = () => {
         {!isLoading && budgets.length > 0 && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {budgets.map((budget) => (
-              <div key={budget.id} className="bg-white rounded-lg shadow-sm overflow-hidden">
-                <div className="p-4">
-                  <div className="flex justify-between items-center mb-3">
+              <div key={budget.id} className="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-lg transition-all border-l-4" style={{ borderLeftColor: getCategoryColor(budget.category_id).replace('bg-', '') }}>
+                <div className="p-5">
+                  <div className="flex justify-between items-center mb-4">
                     <div className="flex items-center">
-                      <span className={`w-3 h-3 rounded-full mr-2 ${getCategoryColor(budget.category_id)}`}></span>
-                      <h3 className="font-medium text-gray-900">{budget.name || getCategoryName(budget.category_id)}</h3>
-                    </div>
+                        <span className={`w-2 h-12 rounded-full mr-3 ${getCategoryColor(budget.category_id)}`}></span>
+                        <div className="flex flex-col">
+                          <h3 className="font-semibold text-lg">{budget.name || getCategoryName(budget.category_id)}</h3>
+                          <div className="flex items-center gap-2">
+                            <span className={`text-sm font-medium text-gray-500`}>
+                              {getCategoryName(budget.category_id)}
+                            </span>
+                            <span className="text-xs text-gray-400">•</span>
+                            <span className="text-sm text-gray-500">{currentPeriod}</span>
+                          </div>
+                        </div>
+                      </div>
                     <div className="flex space-x-2">
                       <button 
                         onClick={() => handleEditBudgetClick(budget)}
-                        className="text-gray-400 hover:text-gray-600"
+                        className="p-2 text-gray-400 hover:text-emerald-600 hover:bg-gray-100 rounded-full transition-colors"
                       >
                         <Edit size={16} />
                       </button>
                       <button 
                         onClick={() => handleDeleteClick(budget.id)}
-                        className="text-gray-400 hover:text-red-600"
+                        className="p-2 text-gray-400 hover:text-red-600 hover:bg-gray-100 rounded-full transition-colors"
                       >
                         <Trash2 size={16} />
                       </button>
                     </div>
                   </div>
                   
-                  <div className="flex justify-between text-sm text-gray-500 mb-1">
-                    <span>${budget.spent.toFixed(2)} spent</span>
-                    <span>${parseFloat(budget.amount).toFixed(2)} allocated</span>
-                  </div>
-                  
-                  <div className="w-full bg-gray-200 rounded-full h-2 mb-2">
-                    <div 
-                      className={`h-2 rounded-full ${getBudgetProgressColor(budget.spent / budget.amount)}`} 
-                      style={{ width: `${Math.min(100, (budget.spent / budget.amount) * 100)}%` }}
-                    ></div>
-                  </div>
-                  
-                  <div className="flex justify-between items-center">
-                    <div className="text-sm">
-                      {budget.remaining >= 0 ? (
-                        <span className="text-emerald-600">${budget.remaining.toFixed(2)} remaining</span>
-                      ) : (
-                        <span className="text-red-600">${Math.abs(budget.remaining).toFixed(2)} over budget</span>
-                      )}
+                  <div className="mb-4">
+                    <div className="flex justify-between mb-1">
+                      <span className="text-2xl font-bold">{formatAmount(parseFloat(budget.amount).toFixed(2))}</span>
+                      <span className={`text-sm py-1 px-2 rounded-full ${
+                        budget.spent/budget.amount > 1 ? 'bg-red-100 text-red-700' : 
+                        budget.spent/budget.amount > 0.9 ? 'bg-yellow-100 text-yellow-700' : 
+                        'bg-emerald-100 text-emerald-700'
+                      }`}>
+                        {Math.round((budget.spent / parseFloat(budget.amount)) * 100)}%
+                      </span>
                     </div>
-                    <div className="text-sm text-gray-500">
-                    {Math.round((budget.spent / parseFloat(budget.amount)) * 100)}% of budget
+                    
+                    <div className="w-full bg-gray-100 rounded-full h-3 mb-3">
+                      <div 
+                        className={`h-3 rounded-full ${getBudgetProgressColor(budget.spent / budget.amount)}`} 
+                        style={{ width: `${Math.min(100, (budget.spent / budget.amount) * 100)}%` }}
+                      ></div>
+                    </div>
+                  </div>
+                  
+                  <div className="flex justify-between items-center text-sm">
+                    <div className="flex items-center">
+                      <span className="text-gray-600">{formatAmount(budget.spent.toFixed(2))} spent</span>
+                    </div>
+                    
+                    <div>
+                      {budget.remaining >= 0 ? (
+                        <span className="text-emerald-600 font-medium">{formatAmount(budget.remaining.toFixed(2))} remaining</span>
+                      ) : (
+                        <span className="text-red-600 font-medium">{formatAmount(Math.abs(budget.remaining).toFixed(2))} over budget</span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -441,138 +463,157 @@ const Budgets = () => {
         )}
       </div>
 
+
       {/* Add Budget Modal */}
       {showAddBudget && (
-        <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
-            <div className="flex justify-between items-center p-4 border-b">
-              <h3 className="text-lg font-medium">Create New Budget</h3>
-              <button onClick={() => setShowAddBudget(false)} className="text-gray-400 hover:text-gray-500">
-                <X size={20} />
-              </button>
+        <div className="fixed inset-0 overflow-y-auto z-50">
+          <div className="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+            <div className="fixed inset-0 transition-opacity" aria-hidden="true">
+              <div className="absolute inset-0 bg-gray-500 opacity-75" onClick={() => setShowAddBudget(false)}></div>
             </div>
-            
-            <div className="p-6">
-              <form onSubmit={handleCreateBudget}>
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
-                  <select 
-                    name="category_id"
-                    value={newBudget.category_id}
-                    onChange={handleBudgetInputChange}
-                    className="block w-full border border-gray-300 rounded-md focus:ring-emerald-500 focus:border-emerald-500 py-2 px-3"
-                    required
-                  >
-                    <option value="">Select a category</option>
-                    {categories.map(category => (
-                      <option key={category.id} value={category.id}>{category.name}</option>
-                    ))}
-                  </select>
-                </div>
-                
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Budget Name (Optional)</label>
-                  <input
-                    type="text"
-                    name="name"
-                    value={newBudget.name}
-                    onChange={handleBudgetInputChange}
-                    placeholder="e.g., Monthly Groceries"
-                    className="block w-full border border-gray-300 rounded-md focus:ring-emerald-500 focus:border-emerald-500 py-2 px-3"
-                  />
-                </div>
-                
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Budget Amount</label>
-                  <div className="relative rounded-md shadow-sm">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                      <DollarSign size={16} className="text-gray-400" />
+
+            <div className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+              <div className="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                <div className="sm:flex sm:items-start">
+                  <div className="mt-3 text-center sm:mt-0 sm:text-left w-full">
+                    <div className="flex justify-between items-center mb-5">
+                      <h3 className="text-lg leading-6 font-medium text-gray-900">
+                        Create New Budget
+                      </h3>
+                      <button
+                        type="button"
+                        onClick={() => setShowAddBudget(false)}
+                        className="text-gray-400 hover:text-gray-500"
+                      >
+                        <X size={20} />
+                      </button>
                     </div>
-                    <input
-                      type="number"
-                      name="amount"
-                      value={newBudget.amount}
-                      onChange={handleBudgetInputChange}
-                      placeholder="0.00"
-                      step="0.01"
-                      min="0"
-                      className="pl-8 block w-full border border-gray-300 rounded-md focus:ring-emerald-500 focus:border-emerald-500 py-2"
-                      required
-                    />
+            
+                    <form onSubmit={handleCreateBudget}>
+                      <div className="mb-4">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
+                        <select 
+                          name="category_id"
+                          value={newBudget.category_id}
+                          onChange={handleBudgetInputChange}
+                          className="block w-full border border-gray-300 rounded-md focus:ring-emerald-500 focus:border-emerald-500 py-2 px-3"
+                          required
+                        >
+                          <option value="">Select a category</option>
+                          {categories.map(category => (
+                            <option key={category.id} value={category.id}>{category.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                      
+                      <div className="mb-4">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Budget Name (Optional)</label>
+                        <input
+                          type="text"
+                          name="name"
+                          value={newBudget.name}
+                          onChange={handleBudgetInputChange}
+                          placeholder="e.g., Monthly Groceries"
+                          className="block w-full border border-gray-300 rounded-md focus:ring-emerald-500 focus:border-emerald-500 py-2 px-3"
+                        />
+                      </div>
+                      
+                      <div className="mb-4">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Budget Amount</label>
+                        <div className="relative rounded-md shadow-sm">
+                          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <DollarSign size={16} className="text-gray-400" />
+                          </div>
+                          <input
+                            type="number"
+                            name="amount"
+                            value={newBudget.amount}
+                            onChange={handleBudgetInputChange}
+                            placeholder="0.00"
+                            step="0.01"
+                            min="0"
+                            className="pl-8 block w-full border border-gray-300 rounded-md focus:ring-emerald-500 focus:border-emerald-500 py-2"
+                            required
+                          />
+                        </div>
+                      </div>
+                      
+                      <div className="mb-4">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Period</label>
+                        <div className="text-gray-700 py-2 px-3 border border-gray-300 rounded-md bg-gray-50">
+                          {currentPeriod} ({periodType})
+                        </div>
+                        <p className="text-xs text-gray-500 mt-1">
+                          Budget period is based on your current period selection.
+                        </p>
+                      </div>
+                      
+                      <div className="mb-4">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Notes (Optional)</label>
+                        <textarea
+                          name="notes"
+                          value={newBudget.notes}
+                          onChange={handleBudgetInputChange}
+                          rows="2"
+                          placeholder="Add notes about this budget"
+                          className="block w-full border border-gray-300 rounded-md focus:ring-emerald-500 focus:border-emerald-500 py-2 px-3"
+                        ></textarea>
+                      </div>
+                      
+                      <div className="mb-4">
+                        <div className="flex items-center">
+                          <input
+                            id="rollover"
+                            name="rollover"
+                            type="checkbox"
+                            checked={newBudget.rollover}
+                            onChange={handleBudgetInputChange}
+                            className="h-4 w-4 text-emerald-600 focus:ring-emerald-500 border-gray-300 rounded"
+                          />
+                          <label htmlFor="rollover" className="ml-2 block text-sm text-gray-700">
+                            Roll over unspent budget to next period
+                          </label>
+                        </div>
+                      </div>
+                      
+                      <div className="mb-4">
+                        <div className="flex items-center">
+                          <input
+                            id="enable_alerts"
+                            name="enable_alerts"
+                            type="checkbox"
+                            checked={newBudget.enable_alerts}
+                            onChange={handleBudgetInputChange}
+                            className="h-4 w-4 text-emerald-600 focus:ring-emerald-500 border-gray-300 rounded"
+                          />
+                          <label htmlFor="enable_alerts" className="ml-2 block text-sm text-gray-700">
+                            Enable alerts when approaching budget limit
+                          </label>
+                        </div>
+                      </div>
+                    </form>
                   </div>
                 </div>
+              </div>
+              
+              <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                <button
+                  type="button"
+                  onClick={handleCreateBudget}
+                  className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-emerald-600 text-base font-medium text-white hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 sm:ml-3 sm:w-auto sm:text-sm"
+                >
+                  <Check size={16} className="mr-1" />
+                  Create Budget
+                </button>
                 
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Period</label>
-                  <div className="text-gray-700 py-2 px-3 border border-gray-300 rounded-md bg-gray-50">
-                    {currentPeriod} ({periodType})
-                  </div>
-                  <p className="text-xs text-gray-500 mt-1">
-                    Budget period is based on your current period selection.
-                  </p>
-                </div>
-                
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Notes (Optional)</label>
-                  <textarea
-                    name="notes"
-                    value={newBudget.notes}
-                    onChange={handleBudgetInputChange}
-                    rows="2"
-                    placeholder="Add notes about this budget"
-                    className="block w-full border border-gray-300 rounded-md focus:ring-emerald-500 focus:border-emerald-500 py-2 px-3"
-                  ></textarea>
-                </div>
-                
-                <div className="mb-4">
-                  <div className="flex items-center">
-                    <input
-                      id="rollover"
-                      name="rollover"
-                      type="checkbox"
-                      checked={newBudget.rollover}
-                      onChange={handleBudgetInputChange}
-                      className="h-4 w-4 text-emerald-600 focus:ring-emerald-500 border-gray-300 rounded"
-                    />
-                    <label htmlFor="rollover" className="ml-2 block text-sm text-gray-700">
-                      Roll over unspent budget to next period
-                    </label>
-                  </div>
-                </div>
-                
-                <div className="mb-4">
-                  <div className="flex items-center">
-                    <input
-                      id="enable_alerts"
-                      name="enable_alerts"
-                      type="checkbox"
-                      checked={newBudget.enable_alerts}
-                      onChange={handleBudgetInputChange}
-                      className="h-4 w-4 text-emerald-600 focus:ring-emerald-500 border-gray-300 rounded"
-                    />
-                    <label htmlFor="enable_alerts" className="ml-2 block text-sm text-gray-700">
-                      Enable alerts when approaching budget limit
-                    </label>
-                  </div>
-                </div>
-                
-                <div className="pt-3 border-t flex justify-end">
-                  <button
-                    type="button"
-                    onClick={() => setShowAddBudget(false)}
-                    className="bg-white py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 mr-2"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-emerald-600 hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500"
-                  >
-                    <Check size={16} className="mr-1" />
-                    Create Budget
-                  </button>
-                </div>
-              </form>
+                <button
+                  type="button"
+                  onClick={() => setShowAddBudget(false)}
+                  className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -580,173 +621,163 @@ const Budgets = () => {
 
       {/* Edit Budget Modal */}
       {showEditBudget && editingBudget && (
-        <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
-            <div className="flex justify-between items-center p-4 border-b">
-              <h3 className="text-lg font-medium">Edit Budget</h3>
-              <button onClick={() => {
+        <div className="fixed inset-0 overflow-y-auto z-50">
+          <div className="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+            <div className="fixed inset-0 transition-opacity" aria-hidden="true">
+              <div className="absolute inset-0 bg-gray-500 opacity-75" onClick={() => {
                 setShowEditBudget(false);
                 setEditingBudget(null);
-              }} className="text-gray-400 hover:text-gray-500">
-                <X size={20} />
-              </button>
+              }}></div>
             </div>
-            
-            <div className="p-6">
-              <form onSubmit={handleUpdateBudget}>
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
-                  <select 
-                    name="category_id"
-                    value={editingBudget.category_id}
-                    onChange={handleBudgetInputChange}
-                    className="block w-full border border-gray-300 rounded-md focus:ring-emerald-500 focus:border-emerald-500 py-2 px-3"
-                    required
-                  >
-                    <option value="">Select a category</option>
-                    {categories.map(category => (
-                      <option key={category.id} value={category.id}>{category.name}</option>
-                    ))}
-                  </select>
-                </div>
-                
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Budget Name (Optional)</label>
-                  <input
-                    type="text"
-                    name="name"
-                    value={editingBudget.name || ''}
-                    onChange={handleBudgetInputChange}
-                    placeholder="e.g., Monthly Groceries"
-                    className="block w-full border border-gray-300 rounded-md focus:ring-emerald-500 focus:border-emerald-500 py-2 px-3"
-                  />
-                </div>
-                
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Budget Amount</label>
-                  <div className="relative rounded-md shadow-sm">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                      <DollarSign size={16} className="text-gray-400" />
-                    </div>
-                    <input
-                      type="number"
-                      name="amount"
-                      value={editingBudget.amount}
-                      onChange={handleBudgetInputChange}
-                      placeholder="0.00"
-                      step="0.01"
-                      min="0"
-                      className="pl-8 block w-full border border-gray-300 rounded-md focus:ring-emerald-500 focus:border-emerald-500 py-2"
-                      required
-                    />
-                  </div>
-                </div>
-                
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Period</label>
-                  <div className="text-gray-700 py-2 px-3 border border-gray-300 rounded-md bg-gray-50">
-                    {currentPeriod} ({periodType})
-                  </div>
-                  <p className="text-xs text-gray-500 mt-1">
-                    Budget period is based on your current period selection.
-                  </p>
-                </div>
-                
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Notes (Optional)</label>
-                  <textarea
-                    name="notes"
-                    value={editingBudget.notes || ''}
-                    onChange={handleBudgetInputChange}
-                    rows="2"
-                    placeholder="Add notes about this budget"
-                    className="block w-full border border-gray-300 rounded-md focus:ring-emerald-500 focus:border-emerald-500 py-2 px-3"
-                  ></textarea>
-                </div>
-                
-                <div className="mb-4">
-                  <div className="flex items-center">
-                    <input
-                      id="edit-rollover"
-                      name="rollover"
-                      type="checkbox"
-                      checked={editingBudget.rollover || false}
-                      onChange={handleBudgetInputChange}
-                      className="h-4 w-4 text-emerald-600 focus:ring-emerald-500 border-gray-300 rounded"
-                    />
-                    <label htmlFor="edit-rollover" className="ml-2 block text-sm text-gray-700">
-                      Roll over unspent budget to next period
-                    </label>
-                  </div>
-                </div>
-                
-                <div className="mb-4">
-                  <div className="flex items-center">
-                    <input
-                      id="edit-enable_alerts"
-                      name="enable_alerts"
-                      type="checkbox"
-                      checked={editingBudget.enable_alerts || false}
-                      onChange={handleBudgetInputChange}
-                      className="h-4 w-4 text-emerald-600 focus:ring-emerald-500 border-gray-300 rounded"
-                    />
-                    <label htmlFor="edit-enable_alerts" className="ml-2 block text-sm text-gray-700">
-                      Enable alerts when approaching budget limit
-                    </label>
-                  </div>
-                </div>
-                
-                <div className="pt-3 border-t flex justify-end">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowEditBudget(false);
-                      setEditingBudget(null);
-                    }}
-                    className="bg-white py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 mr-2"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-emerald-600 hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500"
-                  >
-                    <Check size={16} className="mr-1" />
-                    Update Budget
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        </div>
-      )}
 
-      {/* Delete Confirmation Modal */}
-      {showDeleteConfirmation && (
-        <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
-            <div className="flex items-center mb-4">
-              <AlertTriangle size={24} className="text-red-500 mr-3" />
-              <h3 className="text-lg font-medium text-gray-900">Delete Budget</h3>
-            </div>
+            <div className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+              <div className="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                <div className="sm:flex sm:items-start">
+                  <div className="mt-3 text-center sm:mt-0 sm:text-left w-full">
+                    <div className="flex justify-between items-center mb-5">
+                      <h3 className="text-lg leading-6 font-medium text-gray-900">
+                        Edit Budget
+                      </h3>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowEditBudget(false);
+                          setEditingBudget(null);
+                        }}
+                        className="text-gray-400 hover:text-gray-500"
+                      >
+                        <X size={20} />
+                      </button>
+                    </div>
             
-            <p className="text-gray-700 mb-6">
-              Are you sure you want to delete this budget? This action cannot be undone.
-            </p>
-            
-            <div className="flex justify-end space-x-3">
-              <button
-                onClick={() => setShowDeleteConfirmation(false)}
-                className="bg-white py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConfirmDelete}
-                className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
-              >
-                Delete
-              </button>
+                    <form onSubmit={handleUpdateBudget}>
+                      <div className="mb-4">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
+                        <select 
+                          name="category_id"
+                          value={editingBudget.category_id}
+                          onChange={handleBudgetInputChange}
+                          className="block w-full border border-gray-300 rounded-md focus:ring-emerald-500 focus:border-emerald-500 py-2 px-3"
+                          required
+                        >
+                          <option value="">Select a category</option>
+                          {categories.map(category => (
+                            <option key={category.id} value={category.id}>{category.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                      
+                      <div className="mb-4">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Budget Name (Optional)</label>
+                        <input
+                          type="text"
+                          name="name"
+                          value={editingBudget.name || ''}
+                          onChange={handleBudgetInputChange}
+                          placeholder="e.g., Monthly Groceries"
+                          className="block w-full border border-gray-300 rounded-md focus:ring-emerald-500 focus:border-emerald-500 py-2 px-3"
+                        />
+                      </div>
+                      
+                      <div className="mb-4">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Budget Amount</label>
+                        <div className="relative rounded-md shadow-sm">
+                          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <DollarSign size={16} className="text-gray-400" />
+                          </div>
+                          <input
+                            type="number"
+                            name="amount"
+                            value={editingBudget.amount}
+                            onChange={handleBudgetInputChange}
+                            placeholder="0.00"
+                            step="0.01"
+                            min="0"
+                            className="pl-8 block w-full border border-gray-300 rounded-md focus:ring-emerald-500 focus:border-emerald-500 py-2"
+                            required
+                          />
+                        </div>
+                      </div>
+                      
+                      <div className="mb-4">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Period</label>
+                        <div className="text-gray-700 py-2 px-3 border border-gray-300 rounded-md bg-gray-50">
+                          {currentPeriod} ({periodType})
+                        </div>
+                        <p className="text-xs text-gray-500 mt-1">
+                          Budget period is based on your current period selection.
+                        </p>
+                      </div>
+                      
+                      <div className="mb-4">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Notes (Optional)</label>
+                        <textarea
+                          name="notes"
+                          value={editingBudget.notes || ''}
+                          onChange={handleBudgetInputChange}
+                          rows="2"
+                          placeholder="Add notes about this budget"
+                          className="block w-full border border-gray-300 rounded-md focus:ring-emerald-500 focus:border-emerald-500 py-2 px-3"
+                        ></textarea>
+                      </div>
+                      
+                      <div className="mb-4">
+                        <div className="flex items-center">
+                          <input
+                            id="edit-rollover"
+                            name="rollover"
+                            type="checkbox"
+                            checked={editingBudget.rollover || false}
+                            onChange={handleBudgetInputChange}
+                            className="h-4 w-4 text-emerald-600 focus:ring-emerald-500 border-gray-300 rounded"
+                          />
+                          <label htmlFor="edit-rollover" className="ml-2 block text-sm text-gray-700">
+                            Roll over unspent budget to next period
+                          </label>
+                        </div>
+                      </div>
+                      
+                      <div className="mb-4">
+                        <div className="flex items-center">
+                          <input
+                            id="edit-enable_alerts"
+                            name="enable_alerts"
+                            type="checkbox"
+                            checked={editingBudget.enable_alerts || false}
+                            onChange={handleBudgetInputChange}
+                            className="h-4 w-4 text-emerald-600 focus:ring-emerald-500 border-gray-300 rounded"
+                          />
+                          <label htmlFor="edit-enable_alerts" className="ml-2 block text-sm text-gray-700">
+                            Enable alerts when approaching budget limit
+                          </label>
+                        </div>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                <button
+                  type="button"
+                  onClick={handleUpdateBudget}
+                  className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-emerald-600 text-base font-medium text-white hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 sm:ml-3 sm:w-auto sm:text-sm"
+                >
+                  <Check size={16} className="mr-1" />
+                  Update Budget
+                </button>
+                
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowEditBudget(false);
+                    setEditingBudget(null);
+                  }}
+                  className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
           </div>
         </div>

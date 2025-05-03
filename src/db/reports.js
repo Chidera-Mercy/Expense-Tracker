@@ -42,51 +42,61 @@ export async function fetchExpensesByCategory(startDate, endDate) {
 
 // Fetch monthly expense and income data
 export async function fetchMonthlyFinancials(year) {
-  // Get monthly expenses
-  const { data: expenseData, error: expenseError } = await supabase
-    .rpc('get_monthly_expenses', { year_param: year });
+  try {
+    // Get monthly expenses
+    const { data: expenseData, error: expenseError } = await supabase
+      .rpc('get_monthly_expenses', { year_param: year });
 
-  // Get monthly income
-  const { data: incomeData, error: incomeError } = await supabase
-    .rpc('get_monthly_income', { year_param: year });
+    // Get monthly income
+    const { data: incomeData, error: incomeError } = await supabase
+      .rpc('get_monthly_income', { year_param: year });
 
-  if (expenseError || incomeError) {
-    console.error('Error fetching monthly financials:', expenseError || incomeError);
+    if (expenseError) {
+      console.error('Error fetching monthly expenses:', expenseError);
+      throw expenseError;
+    }
+
+    if (incomeError) {
+      console.error('Error fetching monthly income:', incomeError);
+      throw incomeError;
+    }
+
+    // Create month mapping
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    
+    // Initialize result array with all months
+    const result = months.map((month, index) => ({
+      month,
+      expense: 0,
+      income: 0,
+      monthNumber: index + 1
+    }));
+
+    // Fill in expense data
+    if (expenseData && expenseData.length > 0) {
+      expenseData.forEach(item => {
+        const monthIndex = parseInt(item.month) - 1;
+        if (monthIndex >= 0 && monthIndex < 12) {
+          result[monthIndex].expense = parseFloat(item.total_amount) || 0;
+        }
+      });
+    }
+
+    // Fill in income data
+    if (incomeData && incomeData.length > 0) {
+      incomeData.forEach(item => {
+        const monthIndex = parseInt(item.month) - 1;
+        if (monthIndex >= 0 && monthIndex < 12) {
+          result[monthIndex].income = parseFloat(item.total_amount) || 0;
+        }
+      });
+    }
+
+    return result;
+  } catch (error) {
+    console.error('Error in fetchMonthlyFinancials:', error);
     return [];
   }
-
-  // Create month mapping
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  
-  // Initialize result array with all months
-  const result = months.map((month, index) => ({
-    month,
-    expense: 0,
-    income: 0,
-    monthNumber: index + 1
-  }));
-
-  // Fill in expense data
-  if (expenseData) {
-    expenseData.forEach(item => {
-      const monthIndex = parseInt(item.month) - 1;
-      if (monthIndex >= 0 && monthIndex < 12) {
-        result[monthIndex].expense = parseFloat(item.total_amount) || 0;
-      }
-    });
-  }
-
-  // Fill in income data
-  if (incomeData) {
-    incomeData.forEach(item => {
-      const monthIndex = parseInt(item.month) - 1;
-      if (monthIndex >= 0 && monthIndex < 12) {
-        result[monthIndex].income = parseFloat(item.total_amount) || 0;
-      }
-    });
-  }
-
-  return result;
 }
 
 // Fetch budget performance data

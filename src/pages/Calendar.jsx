@@ -14,9 +14,11 @@ import {
   getMonthDateRange,
   getWeekDateRange
 } from '../db/calendar.js';
+import { useCurrency } from '../CurrencyContext.jsx';
 
 const CalendarPage = () => {
   const { user } = UserAuth();
+  const { symbol } = useCurrency();
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(null);
   const [selectedDateDetails, setSelectedDateDetails] = useState(false);
@@ -285,13 +287,13 @@ const CalendarPage = () => {
           
           {dailyIncome > 0 && (
             <div className="text-xs text-green-600 font-medium">
-              +${dailyIncome.toLocaleString()}
+              +{symbol}{dailyIncome.toLocaleString()}
             </div>
           )}
           
           {dailyExpense > 0 && (
             <div className="text-xs text-red-600 font-medium">
-              -${dailyExpense.toLocaleString()}
+              -{symbol}{dailyExpense.toLocaleString()}
             </div>
           )}
           
@@ -311,7 +313,7 @@ const CalendarPage = () => {
                     '#22c55e'
                 }}
               >
-                {transaction.category}: ${transaction.amount.toLocaleString()}
+                {transaction.category}: {symbol}{transaction.amount.toLocaleString()}
               </div>
             ))}
             {dayTransactions.length > 2 && (
@@ -412,13 +414,13 @@ const CalendarPage = () => {
           <div className="p-3">
             {dailyIncome > 0 && (
               <div className="text-sm text-green-600 font-medium mb-1">
-                +${dailyIncome.toLocaleString()}
+                +{symbol}{dailyIncome.toLocaleString()}
               </div>
             )}
             
             {dailyExpense > 0 && (
               <div className="text-sm text-red-600 font-medium mb-1">
-                -${dailyExpense.toLocaleString()}
+                -{symbol}{dailyExpense.toLocaleString()}
               </div>
             )}
             
@@ -439,7 +441,7 @@ const CalendarPage = () => {
                   <div className="font-medium">{transaction.category}</div>
                   <div className="flex justify-between items-center">
                     <div className="truncate">{transaction.description}</div>
-                    <div>${transaction.amount.toLocaleString()}</div>
+                    <div>{symbol}{transaction.amount.toLocaleString()}</div>
                   </div>
                 </div>
               ))}
@@ -599,16 +601,16 @@ const CalendarPage = () => {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
           <div className="bg-gray-50 p-3 rounded-md">
             <p className="text-sm text-gray-500">Income</p>
-            <p className="text-lg font-semibold text-green-600">+${totalIncome.toLocaleString()}</p>
+            <p className="text-lg font-semibold text-green-600">+{symbol}{totalIncome.toLocaleString()}</p>
           </div>
           <div className="bg-gray-50 p-3 rounded-md">
             <p className="text-sm text-gray-500">Expenses</p>
-            <p className="text-lg font-semibold text-red-600">-${totalExpense.toLocaleString()}</p>
+            <p className="text-lg font-semibold text-red-600">-{symbol}{totalExpense.toLocaleString()}</p>
           </div>
           <div className="bg-gray-50 p-3 rounded-md">
             <p className="text-sm text-gray-500">Net</p>
             <p className={`text-lg font-semibold ${totalIncome - totalExpense >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-              ${(totalIncome - totalExpense).toLocaleString()}
+              {symbol}{(totalIncome - totalExpense).toLocaleString()}
             </p>
           </div>
         </div>
@@ -641,7 +643,7 @@ const CalendarPage = () => {
                 </div>
               </div>
               <div className={transaction.type === 'expense' ? 'text-red-600' : 'text-green-600'}>
-                {transaction.type === 'expense' ? '-' : '+'}${transaction.amount.toLocaleString()}
+                {transaction.type === 'expense' ? '-' : '+'}{symbol}{transaction.amount.toLocaleString()}
               </div>
             </div>
           ))}
