@@ -1,9 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Search,
-  Filter, 
   Plus, 
-  Calendar, 
   Download, 
   Edit, 
   Trash2, 
@@ -13,8 +11,6 @@ import {
   X, 
   Check, 
   DollarSign, 
-  ChevronLeft, 
-  ChevronRight,
   Image, 
   AlertCircle, 
   FileText
@@ -27,34 +23,40 @@ import {
   updateExpense, 
   deleteExpense,
   uploadReceipt,
-  getExpenseStats 
+  getExpenseSummary,
+  getPeriodOptions, 
+  getCurrentPeriod,
+  getNextPeriod,
+  getPreviousPeriod,
+  exportExpensesToCSV  
 } from '../db/expenses';
+
+import { useCurrency } from '../CurrencyContext';
+import ReceiptModal from '../components/ReceiptModal';
 
 
 const Expenses = () => {
   // State management
+  const {formatAmount, symbol} = useCurrency();
   const [expenses, setExpenses] = useState([]);
   const [categories, setCategories] = useState([]);
-  const [activeTab, setActiveTab] = useState('all');
   const [showAddExpense, setShowAddExpense] = useState(false);
   const [showEditExpense, setShowEditExpense] = useState(false);
-  const [currentStep, setCurrentStep] = useState(1);
-  const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [dateRange, setDateRange] = useState({
-    start: new Date(new Date().setDate(1)).toISOString().split('T')[0], // First day of current month
-    end: new Date().toISOString().split('T')[0] // Today
-  });
-  const [showCalendarPopup, setShowCalendarPopup] = useState(false);
-  const [showFilterPopup, setShowFilterPopup] = useState(false);
-  const [filterOptions, setFilterOptions] = useState({
-    category: '',
-    minAmount: '',
-    maxAmount: '',
-    recurring: false
-  });
   const [editingExpenseId, setEditingExpenseId] = useState(null);
-  
+  const [currentStep, setCurrentStep] = useState(1);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+  const [periodType, setPeriodType] = useState('monthly');
+  const [currentPeriod, setCurrentPeriod] = useState(getCurrentPeriod('monthly'));
+  const [periodOptions, setPeriodOptions] = useState({});
+  const [searchTimeout, setSearchTimeout] = useState(null);
+  const [summary, setSummary] = useState({
+    totalExpenses: 0,
+    recurringExpenses: 0,
+    recurringPercentage: 0,
+    averageMonthlyExpenses: 0,
+    growthPercentage: 0
+  });
   // Form state
   const [formData, setFormData] = useState({
     amount: '',
@@ -65,103 +67,86 @@ const Expenses = () => {
     is_recurring: false,
     receipt: null
   });
+  // Filter options
+  const [filterOptions, setFilterOptions] = useState({
+    search: ''
+  });
+  // Applied filters
+  const [appliedFilters, setAppliedFilters] = useState({
+    ...filterOptions,
+    page: 1,
+    limit: 10
+  });
+  const [loading, setLoading] = useState(true);  
+
+  const [showReceiptModal, setShowReceiptModal] = useState(false);
+  const [selectedReceiptUrl, setSelectedReceiptUrl] = useState('');
+
+  const openReceiptModal = (receiptUrl) => {
+    setSelectedReceiptUrl(receiptUrl);
+    setShowReceiptModal(true);
+  };
+
+  const closeReceiptModal = () => {
+    setShowReceiptModal(false);
+  };
   
-  // Effects for data fetching
+  // Fetch expenses data and summary on component mount and when filters change
   useEffect(() => {
-    loadInitialData();
-  }, []);
-  
+    fetchExpensesData();
+    loadPeriodOptions();
+  }, [currentPeriod, periodType]);
   useEffect(() => {
-    loadExpenses();
-  }, [activeTab, searchTerm, dateRange, filterOptions]);
-  
+    fetchExpensesData();
+  }, [appliedFilters]);
+
   // Functions for data fetching
-  const loadInitialData = async () => {
+  const fetchExpensesData = async () => {
+    setLoading(true);
     try {
-      setLoading(true);
+      
       const categoriesData = await fetchCategories();
       setCategories(categoriesData);
-      await loadExpenses();
+
+      const { data, count, page } = await fetchExpenses(currentPeriod, appliedFilters);
+      setExpenses(data || []);
+      setTotalCount(count || 0);
+      setCurrentPage(page);
+
+      // load expense summary
+      const summary = await getExpenseSummary(currentPeriod)
+      setSummary(summary)
     } catch (error) {
       console.error('Error loading initial data:', error);
     } finally {
       setLoading(false);
     }
   };
-  
-  const loadExpenses = async () => {
-    try {
-      setLoading(true);
-      
-      // Prepare filters based on active tab and search term
-      const filters = {
-        startDate: dateRange.start,
-        endDate: dateRange.end,
-        search: searchTerm || undefined
-      };
-      
-      if (activeTab === 'recurring') {
-        filters.status = 'recurring';
-      } else if (activeTab === 'receipts') {
-        filters.hasReceipt = true;
-      }
-      
-      // Add filter options
-      if (filterOptions.category) {
-        filters.category = filterOptions.category;
-      }
-      
-      if (filterOptions.minAmount) {
-        filters.minAmount = parseFloat(filterOptions.minAmount);
-      }
-      
-      if (filterOptions.maxAmount) {
-        filters.maxAmount = parseFloat(filterOptions.maxAmount);
-      }
-      
-      if (filterOptions.recurring) {
-        filters.status = 'recurring';
-      }
-      
-      const data = await fetchExpenses(filters);
-      setExpenses(data);
-    } catch (error) {
-      console.error('Error loading expenses:', error);
-    } finally {
-      setLoading(false);
-    }
+
+  // Load period options
+  const loadPeriodOptions = () => {
+    const options = getPeriodOptions();
+    setPeriodOptions(options);
   };
 
-  const handleDeleteExpense = async (expenseId) => {
-    try {
-      setLoading(true);
-      await deleteExpense(expenseId);
-      setExpenses(expenses.filter(expense => expense.id !== expenseId));
-      // Success notification could be added here
-    } catch (error) {
-      console.error('Error deleting expense:', error);
-      // Error notification could be added here
-    } finally {
-      setLoading(false);
-    }
+  // Handle period type change
+  const handlePeriodTypeChange = (type) => {
+    setPeriodType(type);
+    setCurrentPeriod(getCurrentPeriod(type));
   };
-  
-  // Handle edit expense
-  const handleEditExpense = (expense) => {
-    setEditingExpenseId(expense.id);
-    setFormData({
-      amount: expense.amount.toString(),
-      date: expense.date,
-      merchant: expense.merchant,
-      category_id: expense.category_id || '',
-      description: expense.description || '',
-      is_recurring: expense.status === 'recurring',
-      receipt: null
-    });
-    setCurrentStep(1);
-    setShowEditExpense(true);
+
+  // Navigate to previous period
+  const goToPreviousPeriod = () => {
+    const previousPeriod = getPreviousPeriod(currentPeriod, periodType);
+    setCurrentPeriod(previousPeriod);
   };
-  
+
+  // Navigate to next period
+  const goToNextPeriod = () => {
+    const nextPeriod = getNextPeriod(currentPeriod, periodType);
+    setCurrentPeriod(nextPeriod);
+  };
+
   // Handlers for the expense form
   const handleFormChange = (e) => {
     const { name, value, type, checked, files } = e.target;
@@ -183,6 +168,43 @@ const Expenses = () => {
       });
     }
   };
+
+  // Handle search
+  const handleSearch = (e) => {
+    const searchText = e.target.value;
+    setFilterOptions(prevOptions => ({ ...prevOptions, search: searchText }));
+    
+    // Clear the previous timeout
+    if (searchTimeout) clearTimeout(searchTimeout);
+    
+    // Set new timeout
+    const timeoutId = setTimeout(() => {
+      setAppliedFilters(prevFilters => ({
+        ...prevFilters,
+        search: searchText,
+        page: 1 // Reset to first page when searching
+      }));
+    }, 500);
+    
+    setSearchTimeout(timeoutId);
+  };
+  
+  // Handle edit expense
+  const handleEditExpense = (expense) => {
+    setEditingExpenseId(expense.id);
+    setFormData({
+      amount: expense.amount.toString(),
+      date: expense.date,
+      merchant: expense.merchant,
+      category_id: expense.category_id || '',
+      description: expense.description || '',
+      is_recurring: expense.status === 'recurring',
+      receipt: null
+    });
+    setCurrentStep(1);
+    setShowEditExpense(true);
+  };
+  
   
   const handleNextStep = () => {
     setCurrentStep(currentStep + 1);
@@ -217,6 +239,12 @@ const Expenses = () => {
     
     try {
       setLoading(true);
+
+      // Validate form data
+    if (!formData.amount || !formData.date || !formData.merchant) {
+      alert('Please fill all required fields');
+      return;
+    }
       
       // Create expense object
       const expenseData = {
@@ -235,129 +263,54 @@ const Expenses = () => {
         expenseData.receipt_url = receiptUrl;
       }
       
-      let updatedExpense;
-      
       if (showEditExpense && editingExpenseId) {
         // Update existing expense
-        updatedExpense = await updateExpense(editingExpenseId, expenseData);
-
-        // Ensure category information is attached
-        if (updatedExpense.category_id) {
-          const categoryInfo = categories.find(c => c.id === updatedExpense.category_id);
-          updatedExpense.categories = categoryInfo;
-        }
-        
-        // Update local state
-        setExpenses(expenses.map(expense => 
-          expense.id === editingExpenseId ? updatedExpense : expense
-        ));
+        await updateExpense(editingExpenseId, expenseData);
       } else {
         // Add new expense
-        updatedExpense = await addExpense(expenseData);
-
-        // Ensure category information is attached
-        if (updatedExpense.category_id) {
-          const categoryInfo = categories.find(c => c.id === updatedExpense.category_id);
-          updatedExpense.categories = categoryInfo;
-        }
-        
-        // Update local state
-        setExpenses([updatedExpense, ...expenses]);
+        await addExpense(expenseData);
       }
+
+      // Refresh data
+      fetchExpensesData();
       
       // Close modal and reset form
       closeModal();
       
-      // Success message or notification could be added here
     } catch (error) {
       console.error('Error submitting expense:', error);
-      // Error notification could be added here
+      alert('Error saving expense. Please try again.');
     } finally {
       setLoading(false);
     }
   };
-  
-  // Calendar popup handlers
-  const handleCalendarToggle = () => {
-    setShowCalendarPopup(!showCalendarPopup);
-    setShowFilterPopup(false); // Close filter popup if open
+
+  // Handle delete
+  const handleDeleteExpense = async (expenseId) => {
+    // Confirm delete
+    if (window.confirm('Are you sure you want to delete this expense?')) {
+      try {
+        setLoading(true);
+        await deleteExpense(expenseId);
+        
+        // Refresh data
+        fetchExpensesData();
+      
+      } catch (error) {
+        console.error('Error deleting expense:', error);
+        alert('Error deleting expense. Please try again.');
+      } finally {
+        setLoading(false);
+      }
+    }
   };
-  
-  const handleDateRangeChange = (e) => {
-    const { name, value } = e.target;
-    setDateRange({
-      ...dateRange,
-      [name]: value
-    });
-  };
-  
-  const applyDateRange = () => {
-    // Date range is already applied through state
-    setShowCalendarPopup(false);
-  };
-  
-  // Filter popup handlers
-  const handleFilterToggle = () => {
-    setShowFilterPopup(!showFilterPopup);
-    setShowCalendarPopup(false); // Close calendar popup if open
-  };
-  
-  const handleFilterChange = (e) => {
-    const { name, value, type, checked } = e.target;
-    setFilterOptions({
-      ...filterOptions,
-      [name]: type === 'checkbox' ? checked : value
-    });
-  };
-  
-  const applyFilters = () => {
-    // Filters are already applied through state
-    setShowFilterPopup(false);
-  };
-  
-  const resetFilters = () => {
-    setFilterOptions({
-      category: '',
-      minAmount: '',
-      maxAmount: '',
-      recurring: false
-    });
-    setShowFilterPopup(false);
-  };
-  
-  // Download expenses as CSV
-  const downloadExpensesCSV = () => {
-    // Create CSV headers
-    const headers = ['Date', 'Merchant', 'Category', 'Amount', 'Description', 'Recurring'];
-    
-    // Map expenses to CSV rows
-    const rows = expenses.map(expense => [
-      expense.date,
-      expense.merchant,
-      expense.categories?.name || 'Uncategorized',
-      expense.amount.toFixed(2),
-      expense.description || '',
-      expense.status === 'recurring' ? 'Yes' : 'No'
-    ]);
-    
-    // Combine headers and rows
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(row => row.join(','))
-    ].join('\n');
-    
-    // Create and download the file
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    
-    link.setAttribute('href', url);
-    link.setAttribute('download', `expenses_${formatDate(dateRange.start)}_to_${formatDate(dateRange.end)}.csv`);
-    link.style.visibility = 'hidden';
-    
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+
+  // Handle pagination
+  const handlePageChange = (newPage) => {
+    setAppliedFilters(prevFilters => ({
+      ...prevFilters,
+      page: newPage
+    }));
   };
   
   // Extract form steps into separate components for readability
@@ -367,7 +320,9 @@ const Expenses = () => {
         <label className="block text-sm font-medium text-gray-700 mb-1">Amount *</label>
         <div className="relative rounded-md shadow-sm">
           <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-            <DollarSign size={16} className="text-gray-400" />
+          <span className="text-gray-400 text-sm">
+            {symbol}
+          </span>
           </div>
           <input
             type="number"
@@ -519,7 +474,7 @@ const Expenses = () => {
         <div className="bg-gray-50 p-4 rounded-md space-y-2">
           <div className="flex justify-between">
             <span className="text-sm text-gray-500">Amount:</span>
-            <span className="text-sm font-medium">${parseFloat(formData.amount || 0).toFixed(2)}</span>
+            <span className="text-sm font-medium">{formatAmount(parseFloat(formData.amount || 0).toFixed(2))}</span>
           </div>
           <div className="flex justify-between">
             <span className="text-sm text-gray-500">Date:</span>
@@ -567,16 +522,43 @@ const Expenses = () => {
       icon: Receipt
     }
   ];
+
+  // Handle export to CSV
+  const handleExport = async () => {
+    try {
+      setLoading(true);
+      const csvContent = await exportExpensesToCSV(currentPeriod);
+      
+      // Create blob and download link
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `expense_export_${new Date().toISOString().split('T')[0]}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+    } catch (error) {
+      console.error('Error exporting expense data:', error);
+      alert('Error exporting data. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
   
   return (
-    <div className="flex-1 overflow-auto bg-gray-50">
+    <div className="flex-1 overflow-auto bg-gray-50 flex flex-col h-full">
       {/* Header */}
-      <header className="bg-white p-4 border-b shadow-sm">
+      <header className="bg-white p-6 border-b border-gray-200 shadow-sm">
         <div className="flex justify-between items-center">
-          <h1 className="text-2xl font-bold text-emerald-800">Expenses</h1>
+          <h1 className="text-2xl font-bold text-emerald-800">
+            Expenses
+            <span className="ml-2 text-sm font-normal text-gray-500">Manage your spending</span>
+          </h1>
           <button 
             onClick={() => setShowAddExpense(true)}
-            className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-md flex items-center"
+            className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-md flex items-center shadow-sm transition-colors duration-200"
           >
             <Plus size={18} className="mr-1" />
             <span>Add Expense</span>
@@ -585,9 +567,43 @@ const Expenses = () => {
       </header>
 
       {/* Main content */}
-      <div className="p-6">
+      <div className="p-6 flex-1 overflow-auto bg-gray-50 flex flex-col">
+
+        {/* Income summary */}
+        {loading ? (
+          <div className="text-center py-6">Loading expense data...</div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div className="bg-gradient-to-br from-white to-emerald-50 rounded-lg shadow-md border border-gray-100 p-4 hover:shadow-lg transition-shadow">
+              <div className="text-sm text-gray-500 mb-1">Total Expenses ({currentPeriod})</div>
+              <div className="text-2xl font-semibold">{formatAmount(summary.totalExpenses.toFixed(2))}</div>
+              <div className="flex items-center text-sm mt-1">
+                <span className={summary.growthPercentage >= 0 ? "text-green-600" : "text-red-600"}>
+                  {summary.growthPercentage >= 0 ? "↑" : "↓"} {Math.abs(summary.growthPercentage).toFixed(1)}% from last month
+                </span>
+              </div>
+            </div>
+            
+            <div className="bg-gradient-to-br from-white to-emerald-50 rounded-lg shadow-md border border-gray-100 p-4 hover:shadow-lg transition-shadow">
+              <div className="text-sm text-gray-500 mb-1">Recurring Expenses</div>
+              <div className="text-2xl font-semibold">{formatAmount(summary.recurringExpenses.toFixed(2))}</div>
+              <div className="flex items-center text-sm mt-1 text-gray-500">
+                <span>{summary.recurringPercentage.toFixed(1)}% of total expenses</span>
+              </div>
+            </div>
+            
+            {periodType != "monthly" && <div className="bg-gradient-to-br from-white to-emerald-50 rounded-lg shadow-md border border-gray-100 p-4 hover:shadow-lg transition-shadow">
+              <div className="text-sm text-gray-500 mb-1">Average Monthly Expenses</div>
+              <div className="text-2xl font-semibold">{formatAmount(summary.averageMonthlyExpenses.toFixed(2))}</div>
+              <div className="flex items-center text-sm mt-1 text-gray-500">
+                <span>Based on this period</span>
+              </div>
+            </div>}
+          </div>
+        )}
+
         {/* Filters and search */}
-        <div className="bg-white rounded-lg shadow-sm p-4 mb-6">
+        <div className="bg-white rounded-lg shadow-sm p-5 mb-6 border border-gray-100">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div className="relative flex-grow max-w-md">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -595,414 +611,259 @@ const Expenses = () => {
               </div>
               <input
                 type="text"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
+                value={filterOptions.search}
+                onChange={handleSearch}
                 placeholder="Search expenses..."
                 className="pl-10 pr-4 py-2 w-full border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
               />
             </div>
             
-            <div className="flex gap-2">
-              <div className="relative">
-                <button 
-                  className="flex items-center bg-white border border-gray-300 rounded-md px-4 py-2 focus:outline-none hover:bg-gray-50"
-                  onClick={handleCalendarToggle}
-                >
-                  <Calendar size={18} className="mr-2 text-gray-500" />
-                  <span className="text-sm">
-                    {formatDateShort(dateRange.start)} - {formatDateShort(dateRange.end)}
-                  </span>
-                  <ChevronDown size={16} className="ml-2 text-gray-500" />
-                </button>
-                
-                {/* Calendar Popup */}
-                {showCalendarPopup && (
-                  <div className="absolute right-0 mt-2 w-72 bg-white rounded-md shadow-lg z-50 p-4">
-                    <div className="space-y-4">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
-                        <input
-                          type="date"
-                          name="start"
-                          value={dateRange.start}
-                          onChange={handleDateRangeChange}
-                          className="block w-full border border-gray-300 rounded-md focus:ring-emerald-500 focus:border-emerald-500 py-2 px-3"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">End Date</label>
-                        <input
-                          type="date"
-                          name="end"
-                          value={dateRange.end}
-                          onChange={handleDateRangeChange}
-                          className="block w-full border border-gray-300 rounded-md focus:ring-emerald-500 focus:border-emerald-500 py-2 px-3"
-                        />
-                      </div>
-                      
-                      {/* Quick date presets */}
-                      <div className="grid grid-cols-2 gap-2">
-                        <button
-                          onClick={() => {
-                            const today = new Date();
-                            const lastWeek = new Date();
-                            lastWeek.setDate(today.getDate() - 7);
-                            
-                            setDateRange({
-                              start: lastWeek.toISOString().split('T')[0],
-                              end: today.toISOString().split('T')[0]
-                            });
-                          }}
-                          className="text-xs px-2 py-1 bg-gray-100 rounded-md hover:bg-gray-200"
-                        >
-                          Last 7 days
-                        </button>
-                        <button
-                          onClick={() => {
-                            const today = new Date();
-                            const lastMonth = new Date();
-                            lastMonth.setMonth(today.getMonth() - 1);
-                            
-                            setDateRange({
-                              start: lastMonth.toISOString().split('T')[0],
-                              end: today.toISOString().split('T')[0]
-                            });
-                          }}
-                          className="text-xs px-2 py-1 bg-gray-100 rounded-md hover:bg-gray-200"
-                        >
-                          Last 30 days
-                        </button>
-                        <button
-                          onClick={() => {
-                            const today = new Date();
-                            const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-                            
-                            setDateRange({
-                              start: firstDayOfMonth.toISOString().split('T')[0],
-                              end: today.toISOString().split('T')[0]
-                            });
-                          }}
-                          className="text-xs px-2 py-1 bg-gray-100 rounded-md hover:bg-gray-200"
-                        >
-                          This month
-                        </button>
-                        <button
-                          onClick={() => {
-                            const today = new Date();
-                            const firstDayOfLastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-                            const lastDayOfLastMonth = new Date(today.getFullYear(), today.getMonth(), 0);
-                            
-                            setDateRange({
-                              start: firstDayOfLastMonth.toISOString().split('T')[0],
-                              end: lastDayOfLastMonth.toISOString().split('T')[0]
-                            });
-                          }}
-                          className="text-xs px-2 py-1 bg-gray-100 rounded-md hover:bg-gray-200"
-                        >
-                          Last month
-                        </button>
-                      </div>
-                      
-                      <div className="flex justify-end space-x-2">
-                        <button
-                          onClick={() => setShowCalendarPopup(false)}
-                          className="px-3 py-1 text-sm rounded-md border border-gray-300 hover:bg-gray-50"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          onClick={applyDateRange}
-                          className="px-3 py-1 text-sm rounded-md bg-emerald-600 text-white hover:bg-emerald-700"
-                        >
-                          Apply
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-              
-              <button 
-                className="flex items-center bg-white border border-gray-300 rounded-md px-4 py-2 focus:outline-none hover:bg-gray-50"
-                onClick={handleFilterToggle}
-              >
-                <Filter size={18} className="mr-2 text-gray-500" />
-                <span className="text-sm">Filter</span>
-              </button>
-              
-              {/* Filter Popup */}
-              {showFilterPopup && (
-                <div className="absolute right-0 mt-12 w-72 bg-white rounded-md shadow-lg z-50 p-4">
-                  <div className="space-y-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
-                      <select
-                        name="category"
-                        value={filterOptions.category}
-                        onChange={handleFilterChange}
-                        className="block w-full border border-gray-300 rounded-md focus:ring-emerald-500 focus:border-emerald-500 py-2 px-3"
-                      >
-                        <option value="">All Categories</option>
-                        {categories.map((category) => (
-                          <option key={category.id} value={category.id}>{category.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                    
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Min Amount</label>
-                        <input
-                          type="number"
-                          name="minAmount"
-                          value={filterOptions.minAmount}
-                          onChange={handleFilterChange}
-                          placeholder="0.00"
-                          step="0.01"
-                          className="block w-full border border-gray-300 rounded-md focus:ring-emerald-500 focus:border-emerald-500 py-2 px-3"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Max Amount</label>
-                        <input
-                          type="number"
-                          name="maxAmount"
-                          value={filterOptions.maxAmount}
-                          onChange={handleFilterChange}
-                          placeholder="0.00"
-                          step="0.01"
-                          className="block w-full border border-gray-300 rounded-md focus:ring-emerald-500 focus:border-emerald-500 py-2 px-3"
-                        />
-                      </div>
-                    </div>
-                    
-                    <div>
-                      <div className="flex items-center">
-                        <input
-                          id="filter-recurring"
-                          name="recurring"
-                          type="checkbox"
-                          checked={filterOptions.recurring}
-                          onChange={handleFilterChange}
-                          className="h-4 w-4 text-emerald-600 focus:ring-emerald-500 border-gray-300 rounded"
-                        />
-                        <label htmlFor="filter-recurring" className="ml-2 block text-sm text-gray-700">
-                          Recurring expenses only
-                        </label>
-                      </div>
-                    </div>
-                    
-                    <div className="flex justify-between space-x-2">
-                      <button
-                        onClick={resetFilters}
-                        className="px-3 py-1 text-sm rounded-md text-gray-600 hover:text-gray-800"
-                      >
-                        Reset
-                      </button>
-                      <div className="flex space-x-2">
-                        <button
-                          onClick={() => setShowFilterPopup(false)}
-                          className="px-3 py-1 text-sm rounded-md border border-gray-300 hover:bg-gray-50"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          onClick={applyFilters}
-                          className="px-3 py-1 text-sm rounded-md bg-emerald-600 text-white hover:bg-emerald-700"
-                        >
-                          Apply
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-              
-              <div className="relative">
-                <button 
-                  className="flex items-center bg-white border border-gray-300 rounded-md px-4 py-2 focus:outline-none hover:bg-gray-50"
-                  onClick={downloadExpensesCSV}
-                >
-                  <Download size={18} className="text-gray-500" />
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Tab navigation */}
-        {/* Tab navigation */}
-        <div className="mb-4 border-b border-gray-200">
-          <nav className="flex space-x-6">
-            <TabButton 
-              label="All Expenses" 
-              active={activeTab === 'all'} 
-              onClick={() => setActiveTab('all')} 
-            />
-            <TabButton 
-              label="Recurring" 
-              active={activeTab === 'recurring'} 
-              onClick={() => setActiveTab('recurring')} 
-            />
-            <TabButton 
-              label="With Receipts" 
-              active={activeTab === 'receipts'} 
-              onClick={() => setActiveTab('receipts')} 
-            />
-          </nav>
-        </div>
-
-        {/* Expenses table */}
-        {loading ? (
-          <div className="bg-white rounded-lg shadow-sm p-8 flex justify-center">
-            <div className="text-gray-500">Loading expenses...</div>
-          </div>
-        ) : expenses.length === 0 ? (
-          <div className="bg-white rounded-lg shadow-sm p-8 text-center">
-            <AlertCircle size={36} className="mx-auto text-gray-400 mb-2" />
-            <h3 className="text-lg font-medium text-gray-900 mb-1">No expenses found</h3>
-            <p className="text-gray-500">
-              {activeTab === 'all' 
-                ? "You haven't added any expenses yet." 
-                : activeTab === 'recurring'
-                  ? "You don't have any recurring expenses."
-                  : "You don't have any expenses with receipts."}
-            </p>
-            <button
-              onClick={() => setShowAddExpense(true)}
-              className="mt-4 inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-emerald-600 hover:bg-emerald-700"
+            {/* Download button*/}
+            <button 
+              className="flex items-center bg-white border border-gray-300 rounded-md px-4 py-2 focus:outline-none hover:bg-gray-50"
+              onClick={handleExport}
             >
-              <Plus size={16} className="mr-1" />
-              Add your first expense
+              <Download size={18} className="text-gray-500" />
             </button>
           </div>
-        ) : (
-          <div className="bg-white rounded-lg shadow-sm overflow-hidden">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    <div className="flex items-center">
-                      Date
-                      <ArrowUpDown size={14} className="ml-1 text-gray-400" />
-                    </div>
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    <div className="flex items-center">
-                      Merchant
-                      <ArrowUpDown size={14} className="ml-1 text-gray-400" />
-                    </div>
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    <div className="flex items-center">
-                      Category
-                      <ArrowUpDown size={14} className="ml-1 text-gray-400" />
-                    </div>
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    <div className="flex items-center">
-                      Amount
-                      <ArrowUpDown size={14} className="ml-1 text-gray-400" />
-                    </div>
-                  </th>
-                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {expenses.map((expense) => (
-                  <tr key={expense.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {formatDate(expense.date)}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {expense.merchant}
-                      {expense.status === 'recurring' && (
-                        <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
-                          Recurring
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      <span className="inline-flex items-center">
-                        <span className={`w-2 h-2 rounded-full mr-2 ${expense.categories?.color ? 'bg-'+expense.categories.color+'-500' : 'bg-gray-500'}`}></span>
-                        {expense.categories?.name || 'Uncategorized'}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                      ${parseFloat(expense.amount).toFixed(2)}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                      <div className="flex items-center justify-end space-x-2">
-                        {expense.receipt_url && (
-                          <button 
-                            className="text-gray-500 hover:text-gray-700"
-                            title="View Receipt"
-                            onClick={() => window.open(expense.receipt_url, '_blank')}
-                          >
-                            <Receipt size={18} />
-                          </button>
-                        )}
-                        <button 
-                          className="text-gray-500 hover:text-gray-700"
-                          title="Edit Expense"
-                          onClick={() => handleEditExpense(expense)}
-                        >
-                          <Edit size={18} />
-                        </button>
-                        <button 
-                          className="text-gray-500 hover:text-gray-700"
-                          title="Delete Expense"
-                          onClick={() => {
-                            if (window.confirm('Are you sure you want to delete this expense?')) {
-                              handleDeleteExpense(expense.id);
-                            }
-                          }}
-                        >
-                          <Trash2 size={18} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        </div>
+
+        {/* Period selector */}
+        <div className="flex justify-between items-center mb-6">
+          <div className="flex items-center space-x-2">
+            <button 
+              onClick={goToPreviousPeriod}
+              className="p-1 rounded bg-gray-200 text-gray-600 hover:bg-gray-300"
+            >
+              <ChevronDown className="h-5 w-5 rotate-90" />
+            </button>
+            <h2 className="text-lg font-medium">{currentPeriod}</h2>
+            <button 
+              onClick={goToNextPeriod}
+              className="p-1 rounded bg-gray-200 text-gray-600 hover:bg-gray-300"
+            >
+              <ChevronDown className="h-5 w-5 -rotate-90" />
+            </button>
+          </div>
           
-            {/* Pagination */}
-            <div className="bg-white px-4 py-3 flex items-center justify-between border-t border-gray-200 sm:px-6">
-              <div className="flex-1 flex justify-between sm:hidden">
-                <button className="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
-                  Previous
-                </button>
-                <button className="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
-                  Next
+          <div className="flex space-x-3">
+            <button 
+              onClick={() => handlePeriodTypeChange('monthly')}
+              className={`text-sm font-medium ${periodType === 'monthly' ? 'text-emerald-600' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              Monthly
+            </button>
+            <button 
+              onClick={() => handlePeriodTypeChange('quarterly')}
+              className={`text-sm font-medium ${periodType === 'quarterly' ? 'text-emerald-600' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              Quarterly
+            </button>
+            <button 
+              onClick={() => handlePeriodTypeChange('yearly')}
+              className={`text-sm font-medium ${periodType === 'yearly' ? 'text-emerald-600' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              Yearly
+            </button>
+          </div>
+        </div>
+
+
+        {/* Expenses table */}
+        <div className="bg-white rounded-lg shadow-md border border-gray-100">
+          <div className="overflow-auto" style={{ minHeight: "400px", maxHeight: "600px" }}>
+            {loading ? (
+              <div className="flex justify-center items-center h-32">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-500"></div>
+              </div>
+            ) : expenses.length === 0 ? (
+              <div className="bg-white rounded-lg shadow-sm p-12 text-center border border-dashed border-gray-300">
+                <div className="bg-gray-50 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4">
+                  <AlertCircle size={30} className="text-gray-400" />
+                </div>
+                <h3 className="text-lg font-medium text-gray-900 mb-1">No expenses found</h3>
+                <p className="text-gray-500 max-w-sm mx-auto">
+                  Start tracking your expenses by adding your first entry.
+                </p>
+                <button
+                  onClick={() => setShowAddExpense(true)}
+                  className="mt-6 inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-emerald-600 hover:bg-emerald-700 shadow-sm transition-all duration-200"
+                >
+                  <Plus size={16} className="mr-1" />
+                  Add your first expense
                 </button>
               </div>
-              <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
-                <div>
-                  <p className="text-sm text-gray-700">
-                    Showing <span className="font-medium">1</span> to <span className="font-medium">{expenses.length}</span> of{' '}
-                    <span className="font-medium">{expenses.length}</span> results
-                  </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200 table-fixed">
+                  <thead>
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider sticky top-0 bg-gray-50 z-10 min-w-[150px]">
+                        <div className="flex items-center cursor-pointer" 
+                            onClick={() => {
+                              const newFilters = { ...appliedFilters, sortBy: 'date', sortDir: appliedFilters.sortDir === 'asc' ? 'desc' : 'asc' };
+                              setAppliedFilters(newFilters);
+                            }}>
+                          Date
+                          <ArrowUpDown size={14} className="ml-1 text-gray-400" />
+                        </div>
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider sticky top-0 bg-gray-50 z-10 min-w-[150px]">
+                        <div className="flex items-center cursor-pointer"
+                            onClick={() => {
+                              const newFilters = { ...appliedFilters, sortBy: 'merchant', sortDir: appliedFilters.sortDir === 'asc' ? 'desc' : 'asc' };
+                              setAppliedFilters(newFilters);
+                            }}>
+                          Merchant
+                          <ArrowUpDown size={14} className="ml-1 text-gray-400" />
+                        </div>
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider sticky top-0 bg-gray-50 z-10 min-w-[150px]">
+                        <div className="flex items-center cursor-pointer"
+                            onClick={() => {
+                              const newFilters = { ...appliedFilters, sortBy: 'category', sortDir: appliedFilters.sortDir === 'asc' ? 'desc' : 'asc' };
+                              setAppliedFilters(newFilters);
+                            }}>
+                          Category
+                          <ArrowUpDown size={14} className="ml-1 text-gray-400" />
+                        </div>
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider sticky top-0 bg-gray-50 z-10 min-w-[120px]">
+                        <div className="flex items-center cursor-pointer"
+                            onClick={() => {
+                              const newFilters = { ...appliedFilters, sortBy: 'amount', sortDir: appliedFilters.sortDir === 'asc' ? 'desc' : 'asc' };
+                              setAppliedFilters(newFilters);
+                            }}>
+                          Amount
+                          <ArrowUpDown size={14} className="ml-1 text-gray-400" />
+                        </div>
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider sticky top-0 bg-gray-50 z-10 min-w-[120px]">
+                        <div className="flex items-center">
+                          Recurring
+                        </div>
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider sticky top-0 bg-gray-50 z-10 min-w-[120px]">
+                        <div className="flex items-center">
+                          Receipt
+                        </div>
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider sticky top-0 bg-gray-50 z-10 min-w-[100px]">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {expenses.map((expense) => (
+                      <tr key={expense.id} className="hover:bg-emerald-50 transition-colors duration-150">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {formatDate(expense.date)}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {expense.merchant}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          <span className="inline-flex items-center">
+                            <span className={`w-2 h-2 rounded-full mr-2 ${expense.categories?.color ? 'bg-'+expense.categories.color+'-500' : 'bg-gray-500'}`}></span>
+                            {expense.categories?.name || 'Uncategorized'}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                          {formatAmount(parseFloat(expense.amount).toFixed(2))}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {expense.status === 'recurring' ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
+                              <Repeat size={12} className="mr-1" />
+                              {expense.frequency || 'Monthly'}
+                            </span>
+                          ) : (
+                            <span className="text-gray-400">-</span>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {expense.receipt_url ? (
+                            <span 
+                              className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800 cursor-pointer"
+                              onClick={() => openReceiptModal(expense.receipt_url)}>
+                              <Receipt size={12} className="mr-1" />
+                              View
+                            </span>
+                          ) : (
+                            <span className="text-gray-400">-</span>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                          <div className="flex items-center justify-end space-x-2">
+                            <button 
+                              className="text-gray-500 hover:text-gray-700"
+                              title="Edit Expense"
+                              onClick={() => handleEditExpense(expense)}
+                            >
+                              <Edit size={18} />
+                            </button>
+                            <button 
+                              className="text-gray-500 hover:text-red-600"
+                              title="Delete Expense"
+                              onClick={() => {
+                                if (window.confirm('Are you sure you want to delete this expense?')) {
+                                  handleDeleteExpense(expense.id);
+                                }
+                              }}
+                            >
+                              <Trash2 size={18} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {/* Receipt Modal */}
+                <ReceiptModal 
+                  isOpen={showReceiptModal}
+                  onClose={closeReceiptModal}
+                  receiptUrl={selectedReceiptUrl}
+                />
+              </div>
+            )}
+          </div>
+          
+          {/* Pagination */}
+          {expenses.length > 0 && (
+            <div className="px-4 py-3 bg-white border-t border-gray-200 sm:px-6">
+              <div className="flex items-center justify-between">
+                <div className="text-sm text-gray-700">
+                  Showing <span className="font-medium">{(currentPage - 1) * appliedFilters.limit + 1}</span> to{' '}
+                  <span className="font-medium">
+                    {Math.min(currentPage * appliedFilters.limit, totalCount)}
+                  </span>{' '} 
+                  of <span className="font-medium">{totalCount}</span> results
                 </div>
-                <div>
-                  <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
-                    <button className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">
-                      <ChevronLeft size={18} className="h-5 w-5" aria-hidden="true" />
-                    </button>
-                    <button className="bg-emerald-50 border-emerald-500 text-emerald-600 relative inline-flex items-center px-4 py-2 border text-sm font-medium">
-                      1
-                    </button>
-                    <button className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">
-                      <ChevronRight size={18} className="h-5 w-5" aria-hidden="true" />
-                    </button>
-                  </nav>
+                <div className="flex-1 flex justify-end">
+                  <button
+                    onClick={() => handlePageChange(currentPage - 1)}
+                    disabled={currentPage === 1}
+                    className={`relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 ${
+                      currentPage === 1 ? 'opacity-50 cursor-not-allowed' : ''
+                    }`}
+                  >
+                    Previous
+                  </button>
+                  <button
+                    onClick={() => handlePageChange(currentPage + 1)}
+                    disabled={currentPage * appliedFilters.limit >= totalCount}
+                    className={`ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 ${
+                      currentPage * appliedFilters.limit >= totalCount ? 'opacity-50 cursor-not-allowed' : ''
+                    }`}
+                  >
+                    Next
+                  </button>
                 </div>
               </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {/* Add Expense Modal */}
@@ -1240,35 +1101,13 @@ const Expenses = () => {
   );
 };
 
-// Helper component for tabs
-const TabButton = ({ label, active, onClick }) => {
-  return (
-    <button
-      onClick={onClick}
-      className={`pb-4 px-1 border-b-2 font-medium text-sm ${
-        active
-          ? 'border-emerald-500 text-emerald-600'
-          : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-      }`}
-    >
-      {label}
-    </button>
-  );
-};
+
 
 // Helper functions for date formatting
 const formatDate = (dateString) => {
   const date = new Date(dateString);
   return date.toLocaleDateString('en-US', {
     year: 'numeric',
-    month: 'short',
-    day: 'numeric'
-  });
-};
-
-const formatDateShort = (dateString) => {
-  const date = new Date(dateString);
-  return date.toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric'
   });

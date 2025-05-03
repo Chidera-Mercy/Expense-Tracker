@@ -17,7 +17,8 @@ import {
   ArrowDown,
   PieChart,
   DollarSign,
-  TrendingUp
+  TrendingUp, 
+  X
 } from 'lucide-react';
 import { 
   fetchGoals, 
@@ -27,8 +28,12 @@ import {
   deleteGoal,
   getGoalStats
 } from '../db/goals.js';
+import { UserAuth } from '../AuthContext.jsx';
+import { useCurrency } from '../CurrencyContext.jsx';
 
 const FinancialGoals = () => {
+  const { user } = UserAuth();
+  const {symbol, formatAmount} = useCurrency();
   const [goals, setGoals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({
@@ -79,7 +84,7 @@ const FinancialGoals = () => {
     
     try {
       // Fetch goals
-      const { data: goalsData, error: goalsError } = await fetchGoals();
+      const { data: goalsData, error: goalsError } = await fetchGoals(user.id);
       if (goalsError) throw goalsError;
       
       // Fetch statistics
@@ -135,19 +140,19 @@ const FinancialGoals = () => {
     e.preventDefault();
     
     try {
+      const goalData = {
+        name: newGoal.name,
+        category: newGoal.category,
+        target_amount: parseFloat(newGoal.target_amount) || 0,
+        current_amount: parseFloat(newGoal.current_amount) || 0,
+        deadline: newGoal.deadline,
+        priority: newGoal.priority,
+        color: newGoal.color,
+        notes: newGoal.notes
+      };
+      
       if (isEditing && selectedGoal) {
         // Update existing goal
-        const goalData = {
-          name: newGoal.name,
-          category: newGoal.category,
-          target_amount: parseFloat(newGoal.target_amount) || 0,
-          current_amount: parseFloat(newGoal.current_amount) || 0,
-          deadline: newGoal.deadline,
-          priority: newGoal.priority,
-          color: newGoal.color,
-          notes: newGoal.notes
-        };
-        
         const { error } = await updateGoal(selectedGoal.id, goalData);
         if (error) throw error;
         
@@ -155,18 +160,7 @@ const FinancialGoals = () => {
         setIsEditing(false);
       } else {
         // Add new goal
-        const goalData = {
-          name: newGoal.name,
-          category: newGoal.category,
-          target_amount: parseFloat(newGoal.target_amount) || 0,
-          current_amount: parseFloat(newGoal.current_amount) || 0,
-          deadline: newGoal.deadline,
-          priority: newGoal.priority,
-          color: newGoal.color,
-          notes: newGoal.notes
-        };
-        
-        const { error } = await createGoal(goalData);
+        const { error } = await createGoal(goalData, user.id);
         if (error) throw error;
         
         toast.success("New goal created!");
@@ -267,15 +261,6 @@ const FinancialGoals = () => {
     }
   };
 
-  // Select a goal to view details
-  const viewGoalDetails = (goal) => {
-    setSelectedGoal(goal);
-  };
-
-  // Close goal details modal
-  const closeGoalDetails = () => {
-    setSelectedGoal(null);
-  };
 
   // Calculate time remaining until deadline
   const calculateTimeRemaining = (deadline) => {
@@ -333,12 +318,12 @@ const FinancialGoals = () => {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {sortedGoals.map(goal => {
           const progress = Math.min(Math.round((goal.current_amount / goal.target_amount) * 100), 100);
+          const monthlyContribution = calculateMonthlyContribution(goal);
           
           return (
             <div 
               key={goal.id}
-              className="bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow duration-300 cursor-pointer overflow-hidden"
-              onClick={() => viewGoalDetails(goal)}
+              className="bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow overflow-hidden relative"
             >
               <div className="h-2" style={{ backgroundColor: goal.color }}></div>
               <div className="p-5">
@@ -358,9 +343,10 @@ const FinancialGoals = () => {
                   <p className="text-sm text-gray-500">{goal.category}</p>
                 </div>
                 
+                {/* Progress bar */}
                 <div className="mb-4">
                   <div className="flex justify-between text-sm mb-1">
-                    <span className="font-medium">${parseFloat(goal.current_amount).toLocaleString()} of ${parseFloat(goal.target_amount).toLocaleString()}</span>
+                    <span className="font-medium">{symbol}{parseFloat(goal.current_amount).toLocaleString()} of {symbol}{parseFloat(goal.target_amount).toLocaleString()}</span>
                     <span className="font-medium">{progress}%</span>
                   </div>
                   <div className="w-full bg-gray-100 rounded-full h-2.5">
@@ -371,14 +357,118 @@ const FinancialGoals = () => {
                   </div>
                 </div>
                 
-                <div className="flex justify-between items-center text-sm text-gray-500">
-                  <div className="flex items-center">
-                    <Clock size={16} className="mr-1" />
-                    {calculateTimeRemaining(goal.deadline)}
+                {/* Expanded details section */}
+                <div className="grid grid-cols-2 gap-3 mb-4">
+                  <div className="bg-gray-50 rounded p-2">
+                    <div className="flex items-center text-xs text-gray-500 mb-1">
+                      <Calendar size={12} className="mr-1" />
+                      Target Date
+                    </div>
+                    <p className="text-sm font-medium">
+                      {new Date(goal.deadline).toLocaleDateString('en-US', {
+                        year: 'numeric',
+                        month: 'short',
+                        day: 'numeric'
+                      })}
+                    </p>
                   </div>
-                  <span>
-                    ${(goal.target_amount - goal.current_amount).toLocaleString()} left
-                  </span>
+                  
+                  <div className="bg-gray-50 rounded p-2">
+                    <div className="flex items-center text-xs text-gray-500 mb-1">
+                      <Clock size={12} className="mr-1" />
+                      Time Left
+                    </div>
+                    <p className="text-sm font-medium">
+                      {calculateTimeRemaining(goal.deadline)}
+                    </p>
+                  </div>
+                  
+                  <div className="bg-gray-50 rounded p-2">
+                    <div className="flex items-center text-xs text-gray-500 mb-1">
+                      <span className="text-sm">
+                        {symbol}
+                      </span>
+                      Amount Left
+                    </div>
+                    <p className="text-sm font-medium">
+                      {symbol}{(goal.target_amount - goal.current_amount).toLocaleString()}
+                    </p>
+                  </div>
+                  
+                  <div className="bg-gray-50 rounded p-2">
+                    <div className="flex items-center text-xs text-gray-500 mb-1">
+                      <TrendingUp size={12} className="mr-1" />
+                      Monthly Target
+                    </div>
+                    <p className="text-sm font-medium">
+                      {symbol}{monthlyContribution}
+                    </p>
+                  </div>
+                </div>
+                
+                {/* Notes section if available */}
+                {goal.notes && (
+                  <div className="mb-4">
+                    <div className="text-xs text-gray-500 mb-1">Notes</div>
+                    <p className="text-sm bg-gray-50 p-2 rounded max-h-20 overflow-y-auto">{goal.notes}</p>
+                  </div>
+                )}
+                
+                {/* Update progress input */}
+                <div className="mb-4">
+                  <div className="text-xs text-gray-500 mb-1">Update Progress</div>
+                  <div className="flex">
+                    <div className="relative flex-grow mr-2">
+                      <span className="absolute inset-y-0 left-0 flex items-center pl-2 text-gray-500">
+                        {symbol}
+                      </span>
+                      <input 
+                        type="number" 
+                        className="w-full pl-7 pr-2 py-1 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                        placeholder="New amount"
+                        defaultValue={goal.current_amount}
+                        id={`update-progress-input-${goal.id}`}
+                        min="0"
+                        step="0.01"
+                      />
+                    </div>
+                    <button
+                      className="px-3 py-1 text-xs font-medium text-white bg-green-600 rounded-md hover:bg-green-700 transition-colors"
+                      onClick={() => {
+                        const newAmount = document.getElementById(`update-progress-input-${goal.id}`).value;
+                        handleUpdateGoalProgress(goal.id, newAmount);
+                      }}
+                    >
+                      <Save size={12} className="inline mr-1" />
+                      Save
+                    </button>
+                  </div>
+                </div>
+                
+                {/* Action buttons */}
+                <div className="flex justify-end space-x-2">
+                  <button 
+                    className="p-2 bg-gray-100 rounded hover:bg-gray-200 transition-colors flex items-center"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      editGoal(goal);
+                    }}
+                    title="Edit goal"
+                  >
+                    <Edit size={14} className="mr-1 text-gray-600" />
+                    <span className="text-xs">Edit</span>
+                  </button>
+                  <button 
+                    className="p-2 bg-gray-100 rounded hover:bg-red-100 transition-colors flex items-center"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteGoal(goal.id);
+                    }}
+                    title="Delete goal"
+                  >
+                    <Trash2 size={14} className="mr-1 text-gray-600 hover:text-red-600" />
+                    <span className="text-xs">Delete</span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -418,326 +508,178 @@ const FinancialGoals = () => {
     if (!showAddGoalForm) return null;
     
     return (
-      <div className="fixed inset-0 bg-black bg-opacity-30 backdrop-blur-sm flex items-center justify-center z-50">
-        <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6 max-h-screen overflow-y-auto">
-          <div className="flex justify-between items-center mb-5">
-            <h3 className="text-lg font-semibold">{isEditing ? 'Edit Goal' : 'Create New Goal'}</h3>
-            <button 
-              className="text-gray-400 hover:text-gray-600 transition-colors"
-              onClick={() => setShowAddGoalForm(false)}
-            >
-              <XCircle size={22} />
-            </button>
+      <div className="fixed inset-0 overflow-y-auto z-50">
+        <div className="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+          <div className="fixed inset-0 transition-opacity" aria-hidden="true">
+            <div className="absolute inset-0 bg-gray-500 opacity-75" onClick={() => setShowAddGoalForm(false)}></div>
           </div>
-          
-          <form onSubmit={handleSubmit}>
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Goal Name</label>
-              <input 
-                type="text" 
-                name="name" 
-                value={newGoal.name} 
-                onChange={handleInputChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all"
-                required
-              />
-            </div>
-            
-            <div className="grid grid-cols-2 gap-4 mb-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
-                <select 
-                  name="category" 
-                  value={newGoal.category} 
-                  onChange={handleInputChange}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all"
-                >
-                  {categories.map(category => (
-                    <option key={category} value={category}>{category}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Priority</label>
-                <select 
-                  name="priority" 
-                  value={newGoal.priority} 
-                  onChange={handleInputChange}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all"
-                >
-                  <option value="High">High</option>
-                  <option value="Medium">Medium</option>
-                  <option value="Low">Low</option>
-                </select>
-              </div>
-            </div>
-            
-            <div className="grid grid-cols-2 gap-4 mb-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Target Amount ($)</label>
-                <div className="relative">
-                  <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-500">
-                    <DollarSign size={16} />
-                  </span>
-                  <input 
-                    type="number" 
-                    name="target_amount" 
-                    value={newGoal.target_amount} 
-                    onChange={handleInputChange}
-                    className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all"
-                    min="0"
-                    step="0.01"
-                    required
-                  />
+  
+          <div className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+            <div className="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+              <div className="sm:flex sm:items-start">
+                <div className="mt-3 text-center sm:mt-0 sm:text-left w-full">
+                  <div className="flex justify-between items-center mb-5">
+                    <h3 className="text-lg leading-6 font-medium text-gray-900">
+                      {isEditing ? 'Edit Goal' : 'Create New Goal'}
+                    </h3>
+                    <button
+                      type="button"
+                      onClick={() => setShowAddGoalForm(false)}
+                      className="text-gray-400 hover:text-gray-500"
+                    >
+                      <X size={20} />
+                    </button>
+                  </div>
+  
+                  <form onSubmit={handleSubmit}>
+                    <div className="mb-4">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Goal Name</label>
+                      <input 
+                        type="text" 
+                        name="name" 
+                        value={newGoal.name} 
+                        onChange={handleInputChange}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all"
+                        required
+                      />
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-4 mb-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
+                        <select 
+                          name="category" 
+                          value={newGoal.category} 
+                          onChange={handleInputChange}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all"
+                        >
+                          {categories.map(category => (
+                            <option key={category} value={category}>{category}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Priority</label>
+                        <select 
+                          name="priority" 
+                          value={newGoal.priority} 
+                          onChange={handleInputChange}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all"
+                        >
+                          <option value="High">High</option>
+                          <option value="Medium">Medium</option>
+                          <option value="Low">Low</option>
+                        </select>
+                      </div>
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-4 mb-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Target Amount ({symbol})</label>
+                        <div className="relative">
+                          <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-500">
+                            {symbol}
+                          </span>
+                          <input 
+                            type="number" 
+                            name="target_amount" 
+                            value={newGoal.target_amount} 
+                            onChange={handleInputChange}
+                            className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all"
+                            min="0"
+                            step="0.01"
+                            required
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Current Amount ({symbol})</label>
+                        <div className="relative">
+                          <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-500">
+                            {symbol}
+                          </span>
+                          <input 
+                            type="number" 
+                            name="current_amount" 
+                            value={newGoal.current_amount} 
+                            onChange={handleInputChange}
+                            className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all"
+                            min="0"
+                            step="0.01"
+                            required
+                          />
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div className="mb-4">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Target Date</label>
+                      <div className="relative">
+                        <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-500">
+                          <Calendar size={16} />
+                        </span>
+                        <input 
+                          type="date" 
+                          name="deadline" 
+                          value={newGoal.deadline} 
+                          onChange={handleInputChange}
+                          className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all"
+                          required
+                        />
+                      </div>
+                    </div>
+                    
+                    <div className="mb-4">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Color</label>
+                      <div className="flex space-x-3">
+                        {colors.map(color => (
+                          <div 
+                            key={color}
+                            className={`w-8 h-8 rounded-full cursor-pointer transition-all duration-200 ${newGoal.color === color ? 'ring-2 ring-offset-2 ring-gray-400 transform scale-110' : 'hover:scale-105'}`}
+                            style={{ backgroundColor: color }}
+                            onClick={() => setNewGoal({...newGoal, color})}
+                          ></div>
+                        ))}
+                      </div>
+                    </div>
+                    
+                    <div className="mb-5">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+                      <textarea 
+                        name="notes" 
+                        value={newGoal.notes} 
+                        onChange={handleInputChange}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all"
+                        rows="3"
+                      ></textarea>
+                    </div>
+                  </form>
                 </div>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Current Amount ($)</label>
-                <div className="relative">
-                  <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-500">
-                    <DollarSign size={16} />
-                  </span>
-                  <input 
-                    type="number" 
-                    name="current_amount" 
-                    value={newGoal.current_amount} 
-                    onChange={handleInputChange}
-                    className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all"
-                    min="0"
-                    step="0.01"
-                    required
-                  />
-                </div>
-              </div>
             </div>
-            
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Target Date</label>
-              <div className="relative">
-                <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-500">
-                  <Calendar size={16} />
-                </span>
-                <input 
-                  type="date" 
-                  name="deadline" 
-                  value={newGoal.deadline} 
-                  onChange={handleInputChange}
-                  className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all"
-                  required
-                />
-              </div>
-            </div>
-            
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Color</label>
-              <div className="flex space-x-3">
-                {colors.map(color => (
-                  <div 
-                    key={color}
-                    className={`w-8 h-8 rounded-full cursor-pointer transition-all duration-200 ${newGoal.color === color ? 'ring-2 ring-offset-2 ring-gray-400 transform scale-110' : 'hover:scale-105'}`}
-                    style={{ backgroundColor: color }}
-                    onClick={() => setNewGoal({...newGoal, color})}
-                  ></div>
-                ))}
-              </div>
-            </div>
-            
-            <div className="mb-5">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
-              <textarea 
-                name="notes" 
-                value={newGoal.notes} 
-                onChange={handleInputChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all"
-                rows="3"
-              ></textarea>
-            </div>
-            
-            <div className="flex justify-end space-x-3">
+  
+            <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
               <button
                 type="button"
-                onClick={() => setShowAddGoalForm(false)}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-300"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-md hover:bg-green-700 transition-colors focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
+                onClick={handleSubmit}
+                className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-emerald-600 text-base font-medium text-white hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 sm:ml-3 sm:w-auto sm:text-sm"
               >
                 {isEditing ? 'Update Goal' : 'Create Goal'}
               </button>
+              <button
+                type="button"
+                onClick={() => setShowAddGoalForm(false)}
+                className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+              >
+                Cancel
+              </button>
             </div>
-          </form>
+          </div>
         </div>
       </div>
     );
   };
 
-  const renderGoalDetails = () => {
-    if (!selectedGoal) return null;
-    
-    const progress = Math.min(Math.round((selectedGoal.current_amount / selectedGoal.target_amount) * 100), 100);
-    const monthlyContribution = calculateMonthlyContribution(selectedGoal);
-    
-    return (
-      <div className="fixed inset-0 bg-black bg-opacity-30 backdrop-blur-sm flex items-center justify-center z-50">
-        <div className="bg-white rounded-lg shadow-xl max-w-lg w-full p-6 max-h-screen overflow-y-auto">
-          <div className="flex justify-between items-center mb-5">
-            <h3 className="text-lg font-semibold">Goal Details</h3>
-            <button 
-              className="text-gray-400 hover:text-gray-600 transition-colors"
-              onClick={closeGoalDetails}
-            >
-              <XCircle size={22} />
-            </button>
-          </div>
-          
-          <div className="mb-6">
-            <div className="flex justify-between items-center mb-3">
-              <h2 className="text-xl font-bold">{selectedGoal.name}</h2>
-              <span className={`text-sm px-2 py-1 rounded-full ${
-                  selectedGoal.priority === 'High' ? 'bg-red-100 text-red-800' :
-                  selectedGoal.priority === 'Medium' ? 'bg-yellow-100 text-yellow-800' :
-                  'bg-green-100 text-green-800'
-                }`}>
-                  {selectedGoal.priority}
-                </span>
-            </div>
-            
-            <div className="h-2 w-full mb-6" style={{ backgroundColor: selectedGoal.color }}></div>
-            
-            <div className="grid grid-cols-2 gap-6 mb-6">
-              <div className="bg-gray-50 rounded-lg p-4">
-                <div className="flex items-center mb-2">
-                  <DollarSign size={18} className="text-gray-500 mr-2" />
-                  <h4 className="font-medium">Target Amount</h4>
-                </div>
-                <p className="text-2xl font-bold">${parseFloat(selectedGoal.target_amount).toLocaleString()}</p>
-              </div>
-              
-              <div className="bg-gray-50 rounded-lg p-4">
-                <div className="flex items-center mb-2">
-                  <Wallet size={18} className="text-gray-500 mr-2" />
-                  <h4 className="font-medium">Current Savings</h4>
-                </div>
-                <p className="text-2xl font-bold">${parseFloat(selectedGoal.current_amount).toLocaleString()}</p>
-              </div>
-            </div>
-            
-            <div className="bg-gray-50 rounded-lg p-4 mb-6">
-              <div className="flex justify-between items-center mb-2">
-                <div className="flex items-center">
-                  <Target size={18} className="text-gray-500 mr-2" />
-                  <h4 className="font-medium">Progress</h4>
-                </div>
-                <span className="font-medium">{progress}%</span>
-              </div>
-              <div className="w-full bg-gray-200 rounded-full h-3 mb-2">
-                <div 
-                  className="h-3 rounded-full transition-all duration-500 ease-in-out" 
-                  style={{ width: `${progress}%`, backgroundColor: selectedGoal.color }}
-                ></div>
-              </div>
-              <p className="text-sm text-gray-500 text-right">
-                ${(selectedGoal.target_amount - selectedGoal.current_amount).toLocaleString()} remaining
-              </p>
-            </div>
-            
-            <div className="grid grid-cols-2 gap-6 mb-6">
-              <div className="bg-gray-50 rounded-lg p-4">
-                <div className="flex items-center mb-2">
-                  <Calendar size={18} className="text-gray-500 mr-2" />
-                  <h4 className="font-medium">Target Date</h4>
-                </div>
-                <p className="font-medium">
-                  {new Date(selectedGoal.deadline).toLocaleDateString('en-US', {
-                    year: 'numeric',
-                    month: 'long',
-                    day: 'numeric'
-                  })}
-                </p>
-                <p className="text-sm text-gray-500 mt-1">
-                  {calculateTimeRemaining(selectedGoal.deadline)}
-                </p>
-              </div>
-              
-              <div className="bg-gray-50 rounded-lg p-4">
-                <div className="flex items-center mb-2">
-                  <TrendingUp size={18} className="text-gray-500 mr-2" />
-                  <h4 className="font-medium">Monthly Target</h4>
-                </div>
-                <p className="font-medium">${monthlyContribution}</p>
-                <p className="text-sm text-gray-500 mt-1">
-                  Recommended monthly savings
-                </p>
-              </div>
-            </div>
-            
-            {selectedGoal.notes && (
-              <div className="mb-6">
-                <h4 className="font-medium mb-2">Notes</h4>
-                <p className="text-gray-700 bg-gray-50 p-4 rounded-lg">{selectedGoal.notes}</p>
-              </div>
-            )}
-            
-            <div className="mb-6">
-              <h4 className="font-medium mb-3">Update Progress</h4>
-              <div className="flex items-center">
-                <div className="relative flex-grow mr-3">
-                  <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-500">
-                    <DollarSign size={16} />
-                  </span>
-                  <input 
-                    type="number" 
-                    className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all"
-                    placeholder="Enter new amount"
-                    defaultValue={selectedGoal.current_amount}
-                    id="update-progress-input"
-                    min="0"
-                    step="0.01"
-                  />
-                </div>
-                <button
-                  className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-md hover:bg-green-700 transition-colors focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
-                  onClick={() => {
-                    const newAmount = document.getElementById('update-progress-input').value;
-                    handleUpdateGoalProgress(selectedGoal.id, newAmount);
-                  }}
-                >
-                  <Save size={16} className="inline mr-1" />
-                  Update
-                </button>
-              </div>
-            </div>
-            
-            <div className="flex justify-between">
-              <button
-                className="flex items-center px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-300"
-                onClick={() => {
-                  closeGoalDetails();
-                  editGoal(selectedGoal);
-                }}
-              >
-                <Edit size={16} className="mr-1" />
-                Edit Goal
-              </button>
-              <button
-                className="flex items-center px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700 transition-colors focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
-                onClick={() => {
-                  handleDeleteGoal(selectedGoal.id);
-                  closeGoalDetails();
-                }}
-              >
-                <Trash2 size={16} className="mr-1" />
-                Delete Goal
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  };
   
   const renderStats = () => {
     if (loading) return null;
@@ -759,11 +701,13 @@ const FinancialGoals = () => {
         <div className="bg-white rounded-lg shadow p-4">
           <div className="flex items-center mb-2">
             <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center mr-3">
-              <DollarSign className="w-5 h-5 text-green-600" />
+              <span className="text-sm text-green-600">
+                {symbol}
+              </span>
             </div>
             <div>
               <p className="text-sm text-gray-500">Total Target</p>
-              <h3 className="text-xl font-bold">${parseFloat(stats.totalTargetAmount).toLocaleString()}</h3>
+              <h3 className="text-xl font-bold">{symbol}{parseFloat(stats.totalTargetAmount).toLocaleString()}</h3>
             </div>
           </div>
         </div>
@@ -775,7 +719,7 @@ const FinancialGoals = () => {
             </div>
             <div>
               <p className="text-sm text-gray-500">Total Saved</p>
-              <h3 className="text-xl font-bold">${parseFloat(stats.totalSavedAmount).toLocaleString()}</h3>
+              <h3 className="text-xl font-bold">{symbol}{parseFloat(stats.totalSavedAmount).toLocaleString()}</h3>
             </div>
           </div>
         </div>
@@ -799,8 +743,19 @@ const FinancialGoals = () => {
   };
 
   return (
-    <div className="container mx-auto px-4 py-8 max-w-7xl">
-      <h1 className="text-2xl font-bold mb-6">Financial Goals</h1>
+    <div className="flex-1 overflow-auto bg-gray-50 flex flex-col h-full">
+      {/* Header */}
+      <header className="bg-white p-6 border-b border-gray-200 shadow-sm">
+        <div className="flex justify-between items-center">
+        <h1 className="text-2xl font-bold text-emerald-800">
+          Financial Goals
+          <span className="ml-2 text-sm font-normal text-gray-500">Track your goals</span>
+        </h1>
+        </div>
+      </header>
+
+      {/* Main content */}
+      <div className="p-6 flex-1 overflow-auto bg-gray-50 flex flex-col">
       
       {renderStats()}
       
@@ -850,7 +805,7 @@ const FinancialGoals = () => {
       
       {renderGoalCards()}
       {renderAddGoalForm()}
-      {renderGoalDetails()}
+      </div>
     </div>
   );
 };

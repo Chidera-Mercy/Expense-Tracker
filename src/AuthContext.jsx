@@ -3,9 +3,74 @@ import supabase from "./db/supabase";
 
 const AuthContext = createContext();
 
+// Local storage key for profile data
+const PROFILE_STORAGE_KEY = "user_profile";
+
 export const AuthContextProvider = ({children}) => {
   const [session, setSession] = useState(undefined);
   const [user, setUser] = useState(null);
+  const [profile, setProfile] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  // Load profile from localStorage on initial render
+  useEffect(() => {
+    const storedProfile = localStorage.getItem(PROFILE_STORAGE_KEY);
+    if (storedProfile) {
+      try {
+        setProfile(JSON.parse(storedProfile));
+      } catch (error) {
+        console.error("Error parsing stored profile:", error);
+        localStorage.removeItem(PROFILE_STORAGE_KEY);
+      }
+    }
+  }, []);
+
+  // Update localStorage whenever profile changes
+  useEffect(() => {
+    if (profile) {
+      localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profile));
+    }
+  }, [profile]);
+
+  // Fetch user profile helper function
+  const fetchUserProfile = async (userId) => {
+    try {
+      setLoading(true);
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .single();
+      
+      if (error) throw error;
+      
+      // Save profile to state and localStorage
+      setProfile(data);
+      localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(data));
+      
+      return data;
+    } catch (error) {
+      console.error("Error fetching user profile:", error);
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Update only the local profile state
+  const updateLocalProfile = (profileData) => {
+    if (!profile) return;
+    
+    // Merge the existing profile with the new data
+    const updatedProfile = {
+      ...profile,
+      ...profileData
+    };
+    
+    // Update state and localStorage
+    setProfile(updatedProfile);
+    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(updatedProfile));
+  };
 
   // Sign up
   const signUpNewUser = async (firstname, lastname, email, password, avatarFile) => {
@@ -14,6 +79,11 @@ export const AuthContextProvider = ({children}) => {
       const { data: userData, error: userError } = await supabase.auth.signUp({
         email: email.toLowerCase(),
         password: password,
+        options: {
+          data: {
+            display_name: `${firstname} ${lastname}$`
+          }
+        }
       });
       
       if (userError) {
@@ -33,46 +103,50 @@ export const AuthContextProvider = ({children}) => {
 
       // 3. upload profile picture
       let avatarUrl = null;
-      if (avatarFile && sessionData?.session) {
+      if (avatarFile) {
         try{
           const fileName = `avatar-${userId}`;
 
           // Upload the file
-          const { error: storageError } = await supabase.storage
+          const { error: uploadError } = await supabase.storage
             .from("avatars")
             .upload(fileName, avatarFile, {upsert: true});
 
-          if (storageError) {
-            console.error("Error uploading avatar: ", storageError);
+          if (uploadError) {
+            console.error("Error uploading avatar: ", uploadError);
           } else {
             // Get the public URL
-            const { data } = supabase.storage
+            const { data: { publicUrl }, error: urlError } = supabase.storage
               .from("avatars")
               .getPublicUrl(fileName);
             
-            avatarUrl = data.publicUrl;
+            avatarUrl = publicUrl
           }
         } catch (err) {
           console.error("Avatar upload error:", err);
-          // Continue with signup even if avatar upload fails
         }
       }
 
       // 4. insert user to profiles table
+      const profileData = {
+        id: userId,
+        email: email,
+        first_name: firstname,
+        last_name: lastname,
+        avatar_url: avatarUrl
+      };
       const { error: profileError } = await supabase
         .from('profiles')
-        .upsert({
-          id: userId,
-          email: email,
-          first_name: firstname,
-          last_name: lastname,
-          avatar_url: avatarUrl
-        });
+        .upsert(profileData);
 
       if (profileError) {
         console.error("Error creating profile: ", profileError);
         return { success: false, error: profileError.message || "Failed to create user profile" };
       }
+
+      // Save profile to state and localStorage
+      setProfile(profileData);
+      localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profileData));
 
       return { success: true, data: userData };
     } catch (err) {
@@ -80,6 +154,7 @@ export const AuthContextProvider = ({children}) => {
       return { success: false, error: err.message || "An unexpected error occurred" };
     }
   };
+  
   // Sign in
   const signInUser = async (email, password) => {
     try {
@@ -91,6 +166,11 @@ export const AuthContextProvider = ({children}) => {
       if (error) {
         console.error("Sign-in error: ", error.message);
         return {success: false, error: error.message};
+      }
+
+      // Get user profile after successful login
+      if (data.user) {
+        await fetchUserProfile(data.user.id);
       }
 
       console.log("Sign in success");
@@ -108,11 +188,22 @@ export const AuthContextProvider = ({children}) => {
     supabase.auth.getSession().then(({data: {session}}) => {
       setSession(session);
       setUser(session?.user || null);
+      
+      // If we have a user but no profile, try to fetch it
+      if (session?.user && !profile) {
+        fetchUserProfile(session.user.id);
+      }
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       setUser(session?.user || null);
+      
+      // If user logged out, clear profile
+      if (!session) {
+        setProfile(null);
+        localStorage.removeItem(PROFILE_STORAGE_KEY);
+      }
     });
 
     return () => {
@@ -126,11 +217,15 @@ export const AuthContextProvider = ({children}) => {
     if (error) {
       console.error("Error signing out:", error);
     }
+    
+    // Clear profile from state and localStorage
+    setProfile(null);
+    localStorage.removeItem(PROFILE_STORAGE_KEY);
   }
 
   return (
     <AuthContext.Provider
-      value={{signUpNewUser, signInUser, session, user, signOut}}
+      value={{signUpNewUser, signInUser, session, user, signOut, profile, updateLocalProfile}}
     >
       {children}
     </AuthContext.Provider>

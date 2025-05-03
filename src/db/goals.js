@@ -4,11 +4,12 @@ import supabase from "./supabase";
  * Fetch all financial goals for the current user
  * @returns {Promise} Promise object with the fetched goals
  */
-export async function fetchGoals() {
+export async function fetchGoals(userId) {
   try {
     const { data, error } = await supabase
       .from('financial_goals')
       .select('*')
+      .eq('user_id', userId)
       .order('created_at', { ascending: false });
       
     if (error) throw error;
@@ -24,18 +25,13 @@ export async function fetchGoals() {
  * @param {Object} goalData - Object containing goal data
  * @returns {Promise} Promise object with the created goal
  */
-export async function createGoal(goalData) {
-  try {
-    // Get the current user
-    const { data: { user } } = await supabase.auth.getUser();
-    
-    if (!user) throw new Error('User not authenticated');
-    
+export async function createGoal(goalData, userId) {
+  try { 
     const { data, error } = await supabase
       .from('financial_goals')
       .insert({
         ...goalData,
-        user_id: user.id,
+        user_id: userId,
         created_at: new Date(),
         updated_at: new Date()
       })

@@ -1,66 +1,48 @@
 import supabase from "./supabase";
 
-/**
- * Fetch all expenses for the current user
- * @param {Object} filters - Optional filters like date range, category, etc.
- * @returns {Promise} - Promise with expenses data
- */
-export const fetchExpenses = async (filters = {}) => {
+// Function to fetch expenses with pagination and search
+export const fetchExpenses = async (period = null, filters = {}) => {
   try {
+    const {
+      page = 1,
+      limit = 10,
+      search
+    } = filters;
+
     let query = supabase
       .from('expenses')
       .select(`
         *,
         categories:category_id (id, name, color)
-      `)
-      .order('date', { ascending: false });
-    
-    // Apply filters if provided
-    if (filters.startDate && filters.endDate) {
-      query = query.gte('date', filters.startDate).lte('date', filters.endDate);
-    }
-    
-    if (filters.category) {
-      query = query.eq('category_id', filters.category);
-    }
-    
-    if (filters.status) {
-      query = query.eq('status', filters.status);
-    }
-    
-    if (filters.hasReceipt === true) {
-      query = query.not('receipt_url', 'is', null);
-    }
-    
-    if (filters.search) {
-      query = query.ilike('merchant', `%${filters.search}%`);
-    }
-    
-    const { data, error } = await query;
+      `, { count: 'exact' });
 
-    if (error) throw error;
-    return data;
+    // Filter by period if provided
+    if (period) {
+      const { periodStart, periodEnd } = getPeriodDates(period);
+      query = query.gte('date', periodStart).lte('date', periodEnd);
+    }
+
+    // Apply search filter
+    if (search && search.trim() !== '') {
+      query = query.or(`merchant.ilike.%${search}%,description.ilike.%${search}%`);
+    }
+
+    // Calculate pagination
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+
+    // Add sorting and pagination
+    query = query.order('date', { ascending: false }).range(from, to);
+
+    const { data, error, count } = await query;
+
+    if (error) {
+      throw error;
+    }
+
+    return { data, count, page, limit };
   } catch (error) {
     console.error('Error fetching expenses:', error);
-    throw error;
-  }
-};
-
-/**
- * Fetch all categories (both default and user-created)
- * @returns {Promise} - Promise with categories data
- */
-export const fetchCategories = async () => {
-  try {
-    const { data, error } = await supabase
-      .from('categories')
-      .select('*')
-      .order('name');
-    
-    if (error) throw error;
-    return data;
-  } catch (error) {
-    console.error('Error fetching categories:', error);
     throw error;
   }
 };
@@ -71,29 +53,29 @@ export const fetchCategories = async () => {
  * @returns {Promise} - Promise with the newly created expense
  */
 export const addExpense = async (expenseData) => {
-    try {
-      // Get the current user
-      const { data: { user } } = await supabase.auth.getUser();
-      
-      if (!user) throw new Error('User not authenticated');
-      
-      // Add the user_id to the expense data
-      const expenseWithUserId = {
-        ...expenseData,
-        user_id: user.id
-      };
-      
-      const { data, error } = await supabase
-        .from('expenses')
-        .insert([expenseWithUserId])
-        .select();
-      
-      if (error) throw error;
-      return data[0];
-    } catch (error) {
-      console.error('Error adding expense:', error);
-      throw error;
-    }
+  try {
+    // Get the current user
+    const { data: { user } } = await supabase.auth.getUser();
+    
+    if (!user) throw new Error('User not authenticated');
+    
+    // Add the user_id to the expense data
+    const expenseWithUserId = {
+      ...expenseData,
+      user_id: user.id
+    };
+    
+    const { data, error } = await supabase
+      .from('expenses')
+      .insert([expenseWithUserId])
+      .select();
+    
+    if (error) throw error;
+    return data[0];
+  } catch (error) {
+    console.error('Error adding expense:', error);
+    throw error;
+  }
 };
 
 /**
@@ -144,108 +126,301 @@ export const deleteExpense = async (id) => {
  * @returns {Promise} - Promise with the public URL of the uploaded file
  */
 export const uploadReceipt = async (file) => {
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('User not authenticated');
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('User not authenticated');
+    
+    const fileExt = file.name.split('.').pop();
+    const fileName = `${Date.now()}.${fileExt}`;
+    const filePath = `${user.id}/${fileName}`;
+    
+    const { error: uploadError } = await supabase.storage
+      .from('receipts')
+      .upload(filePath, file);
       
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${Date.now()}.${fileExt}`;
-      const filePath = `${user.id}/${fileName}`;
+    if (uploadError) throw uploadError;
+    
+    const { data: { publicUrl }, error: urlError } = supabase.storage
+      .from('receipts')
+      .getPublicUrl(filePath);
       
-      const { error: uploadError } = await supabase.storage
-        .from('receipts')
-        .upload(filePath, file);
-        
-      if (uploadError) throw uploadError;
-      
-      const { data: { publicUrl }, error: urlError } = supabase.storage
-        .from('receipts')
-        .getPublicUrl(filePath);
-        
-      if (urlError) throw urlError;
-      
-      return publicUrl;
-    } catch (error) {
-      console.error('Error uploading receipt:', error);
-      throw error;
+    if (urlError) throw urlError;
+    
+    return publicUrl;
+  } catch (error) {
+    console.error('Error uploading receipt:', error);
+    throw error;
+  }
+};
+
+// Function to get expense summary for a specific period
+export const getExpenseSummary = async (period) => {
+  try {
+    // Get date range for the specified period
+    const { periodStart, periodEnd } = getPeriodDates(period);
+
+    // Get total expenses for current period
+    const { data: currentData, error: currentError } = await supabase
+      .from('expenses')
+      .select('amount, is_recurring, date')
+      .gte('date', periodStart)
+      .lte('date', periodEnd);
+
+    if (currentError) throw currentError;
+
+    // Calculate total and recurring expenses
+    const totalExpenses = currentData.reduce((sum, item) => sum + parseFloat(item.amount), 0);
+    const recurringExpenses = currentData
+      .filter(item => item.is_recurring)
+      .reduce((sum, item) => sum + parseFloat(item.amount), 0);
+
+    // Get previous period dates
+    const previousPeriod = getPreviousPeriod(period, getPeriodType(period));
+    const { periodStart: prevStart, periodEnd: prevEnd } = getPeriodDates(previousPeriod);
+
+    // Get previous period data for growth calculation
+    const { data: previousData, error: previousError } = await supabase
+      .from('expenses')
+      .select('amount')
+      .gte('date', prevStart)
+      .lte('date', prevEnd);
+    
+    if (previousError) throw previousError;
+    
+    const previousTotal = previousData.reduce((sum, item) => sum + parseFloat(item.amount), 0);
+    
+    // Calculate growth percentage
+    let growthPercentage = 0;
+    if (previousTotal > 0) {
+      growthPercentage = ((totalExpenses - previousTotal) / previousTotal) * 100;
     }
+
+    // Calculate average monthly expenses if we're looking at a period longer than a month
+    let averageMonthlyExpenses = totalExpenses;
+    const periodType = getPeriodType(period);
+    
+    if (periodType === 'quarterly') {
+      // Divide by roughly 3 months for quarterly view
+      averageMonthlyExpenses = totalExpenses / 3;
+    } else if (periodType === 'yearly') {
+      // Divide by 12 months for yearly view
+      averageMonthlyExpenses = totalExpenses / 12;
+    }
+
+    return {
+      totalExpenses,
+      recurringExpenses,
+      recurringPercentage: totalExpenses > 0 ? (recurringExpenses / totalExpenses) * 100 : 0,
+      averageMonthlyExpenses,
+      growthPercentage,
+      period,
+      periodType
+    };
+  } catch (error) {
+    console.error('Error fetching expense summary:', error);
+    throw error;
+  }
+};
+
+// Function to export expenses data to CSV
+export const exportExpensesToCSV = async (period = null) => {
+  try {
+    let query = supabase
+      .from('expenses')
+      .select(`
+        *,
+        categories:category_id (name)
+      `)
+      .order('date', { ascending: false });
+      
+    // Filter by period if provided
+    if (period) {
+      const { periodStart, periodEnd } = getPeriodDates(period);
+      query = query.gte('date', periodStart).lte('date', periodEnd);
+    }
+    
+    const { data, error } = await query;
+
+    if (error) throw error;
+
+    // Convert data to CSV format
+    const headers = ['Date', 'Merchant', 'Category', 'Amount', 'Status', 'Description'];
+    const csvContent = [
+      headers.join(','),
+      ...data.map(row => [
+        row.date,
+        `"${row.merchant}"`,
+        `"${row.categories ? row.categories.name : ''}"`,
+        row.amount,
+        row.status || '',
+        `"${row.description || ''}"`
+      ].join(','))
+    ].join('\n');
+
+    return csvContent;
+  } catch (error) {
+    console.error('Error exporting expenses data:', error);
+    throw error;
+  }
 };
 
 /**
- * Get expense statistics
- * @param {string} period - 'week', 'month', or 'year'
- * @returns {Promise} - Promise with the statistics data
+ * Fetch all categories (both default and user-created)
+ * @returns {Promise} - Promise with categories data
  */
-export const getExpenseStats = async (period = 'month') => {
+export const fetchCategories = async () => {
   try {
-    // Calculate date range based on period
-    const now = new Date();
-    let startDate;
+    const { data, error } = await supabase
+      .from('categories')
+      .select('*')
+      .order('name');
     
-    switch (period) {
-      case 'week':
-        startDate = new Date(now);
-        startDate.setDate(now.getDate() - 7);
-        break;
-      case 'month':
-        startDate = new Date(now);
-        startDate.setMonth(now.getMonth() - 1);
-        break;
-      case 'year':
-        startDate = new Date(now);
-        startDate.setFullYear(now.getFullYear() - 1);
-        break;
-      default:
-        startDate = new Date(now);
-        startDate.setMonth(now.getMonth() - 1);
-    }
-    
-    const formattedStartDate = startDate.toISOString().split('T')[0];
-    const formattedEndDate = now.toISOString().split('T')[0];
-    
-    // Get total amount spent in period
-    const { data: totalData, error: totalError } = await supabase
-      .from('expenses')
-      .select('amount')
-      .gte('date', formattedStartDate)
-      .lte('date', formattedEndDate);
-    
-    if (totalError) throw totalError;
-    
-    // Get expenses by category
-    const { data: categoryData, error: categoryError } = await supabase
-      .from('expenses')
-      .select(`
-        amount,
-        categories:category_id (name)
-      `)
-      .gte('date', formattedStartDate)
-      .lte('date', formattedEndDate);
-    
-    if (categoryError) throw categoryError;
-    
-    // Calculate total
-    const total = totalData.reduce((sum, expense) => sum + expense.amount, 0);
-    
-    // Calculate category totals
-    const byCategory = {};
-    categoryData.forEach(expense => {
-      const categoryName = expense.categories ? expense.categories.name : 'Uncategorized';
-      if (!byCategory[categoryName]) {
-        byCategory[categoryName] = 0;
-      }
-      byCategory[categoryName] += expense.amount;
-    });
-    
-    return {
-      total,
-      byCategory,
-      period,
-      startDate: formattedStartDate,
-      endDate: formattedEndDate
-    };
+    if (error) throw error;
+    return data;
   } catch (error) {
-    console.error('Error getting expense statistics:', error);
+    console.error('Error fetching categories:', error);
     throw error;
   }
+};
+
+// Helper function to get date range for a period
+export const getPeriodDates = (period) => {
+  const now = new Date();
+  let periodStart, periodEnd;
+  
+  // Parse period string: "April 2025", "Q2 2025", "2025"
+  if (period.includes('Q')) {
+    // Quarterly
+    const [quarter, year] = period.replace('Q', '').split(' ');
+    const quarterStartMonth = (parseInt(quarter) - 1) * 3;
+    periodStart = new Date(parseInt(year), quarterStartMonth, 1);
+    periodEnd = new Date(parseInt(year), quarterStartMonth + 3, 0);
+  } else if (period.match(/^\d{4}$/)) {
+    // Yearly
+    const year = parseInt(period);
+    periodStart = new Date(year, 0, 1);
+    periodEnd = new Date(year, 11, 31);
+  } else {
+    // Monthly
+    const [month, year] = period.split(' ');
+    const monthIndex = getMonthIndex(month);
+    periodStart = new Date(parseInt(year), monthIndex, 1);
+    periodEnd = new Date(parseInt(year), monthIndex + 1, 0);
+  }
+  
+  return {
+    periodStart: periodStart.toISOString().split('T')[0],
+    periodEnd: periodEnd.toISOString().split('T')[0]
+  };
+};
+
+// Get month index from name
+const getMonthIndex = (monthName) => {
+  const months = [
+    'January', 'February', 'March', 'April', 'May', 'June', 
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ];
+  return months.findIndex(m => m.startsWith(monthName));
+};
+
+// Get formatted period options
+export const getPeriodOptions = () => {
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth();
+  
+  // Generate 6 months before and after current month
+  const monthOptions = [];
+  for (let i = -6; i <= 6; i++) {
+    const monthDate = new Date(currentYear, currentMonth + i, 1);
+    const monthName = monthDate.toLocaleString('default', { month: 'long' });
+    const year = monthDate.getFullYear();
+    monthOptions.push(`${monthName} ${year}`);
+  }
+  
+  // Generate quarterly options
+  const quarterOptions = [];
+  for (let year = currentYear - 1; year <= currentYear + 1; year++) {
+    for (let quarter = 1; quarter <= 4; quarter++) {
+      quarterOptions.push(`Q${quarter} ${year}`);
+    }
+  }
+  
+  // Generate yearly options
+  const yearOptions = [];
+  for (let year = currentYear - 2; year <= currentYear + 2; year++) {
+    yearOptions.push(`${year}`);
+  }
+  
+  return {
+    monthly: monthOptions,
+    quarterly: quarterOptions,
+    yearly: yearOptions
+  };
+};
+
+// Get previous period
+export const getPreviousPeriod = (currentPeriod, periodType = 'monthly') => {
+  if (periodType === 'monthly') {
+    const [month, year] = currentPeriod.split(' ');
+    const monthIndex = getMonthIndex(month);
+    const date = new Date(parseInt(year), monthIndex - 1, 1);
+    return `${date.toLocaleString('default', { month: 'long' })} ${date.getFullYear()}`;
+  } else if (periodType === 'quarterly') {
+    const [quarter, year] = currentPeriod.replace('Q', '').split(' ');
+    const quarterNum = parseInt(quarter);
+    if (quarterNum === 1) {
+      return `Q4 ${parseInt(year) - 1}`;
+    } else {
+      return `Q${quarterNum - 1} ${year}`;
+    }
+  } else if (periodType === 'yearly') {
+    return `${parseInt(currentPeriod) - 1}`;
+  }
+  return currentPeriod;
+};
+
+// Get next period
+export const getNextPeriod = (currentPeriod, periodType = 'monthly') => {
+  if (periodType === 'monthly') {
+    const [month, year] = currentPeriod.split(' ');
+    const monthIndex = getMonthIndex(month);
+    const date = new Date(parseInt(year), monthIndex + 1, 1);
+    return `${date.toLocaleString('default', { month: 'long' })} ${date.getFullYear()}`;
+  } else if (periodType === 'quarterly') {
+    const [quarter, year] = currentPeriod.replace('Q', '').split(' ');
+    const quarterNum = parseInt(quarter);
+    if (quarterNum === 4) {
+      return `Q1 ${parseInt(year) + 1}`;
+    } else {
+      return `Q${quarterNum + 1} ${year}`;
+    }
+  } else if (periodType === 'yearly') {
+    return `${parseInt(currentPeriod) + 1}`;
+  }
+  return currentPeriod;
+};
+
+// Get current period
+export const getCurrentPeriod = (periodType = 'monthly') => {
+  const now = new Date();
+  if (periodType === 'monthly') {
+    return `${now.toLocaleString('default', { month: 'long' })} ${now.getFullYear()}`;
+  } else if (periodType === 'quarterly') {
+    const quarter = Math.floor(now.getMonth() / 3) + 1;
+    return `Q${quarter} ${now.getFullYear()}`;
+  } else if (periodType === 'yearly') {
+    return `${now.getFullYear()}`;
+  }
+  return '';
+};
+
+// Helper function to determine period type
+export const getPeriodType = (period) => {
+  if (period.includes('Q')) {
+    return 'quarterly';
+  } else if (period.match(/^\d{4}$/)) {
+    return 'yearly';
+  }
+  return 'monthly';
 };

@@ -46,7 +46,6 @@ export async function fetchCategories(userId) {
   const { data: categories, error } = await supabase
     .from('categories')
     .select('id, name, color, icon')
-    .eq('user_id', userId);
 
   if (error) {
     console.error('Error fetching categories:', error);
