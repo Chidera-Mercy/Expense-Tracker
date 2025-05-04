@@ -106,7 +106,7 @@ const Signup = () => {
       if (!success) {
         setError(error || "Registration failed. Please try again.");
       } else {
-        navigate("/home");
+        navigate("/login");
       }      
     } catch (err) {
       console.error('Signup error:', err);
