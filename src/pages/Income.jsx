@@ -489,7 +489,7 @@ const Income = () => {
       
       return savedCategory;
     } catch (err) {
-      console.error('Error saving expense category:', err);
+      console.error('Error saving income category:', err);
       throw err;
     }
   };
@@ -507,7 +507,7 @@ const Income = () => {
         prevEntries.filter(income => income.category_id !== categoryId)
       );
     } catch (err) {
-      console.error('Error deleting expense category:', err);
+      console.error('Error deleting income category:', err);
       throw err;
     }
   };
@@ -805,7 +805,7 @@ return (
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                         <span className="inline-flex items-center">
                           <span className={`w-2 h-2 rounded-full mr-2 ${income.categories?.color ? 'bg-'+income.categories.color+'-500' : 'bg-gray-500'}`}></span>
-                          {expense.categories?.name || 'Uncategorized'}
+                          {income.categories?.name || 'Uncategorized'}
                         </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-emerald-600">

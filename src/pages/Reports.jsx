@@ -1,10 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  Search, Filter, Plus, Calendar, Download, 
-  Edit, Trash2, ArrowUpDown, ChevronDown, 
-  MoreHorizontal, X, Check, DollarSign, 
-  BarChart2, RefreshCw, Repeat, PieChart as PieChartIcon,
-  TrendingUp, Layers, Award, Zap, FileText
+  Plus, 
+  Download, 
+  ArrowUpDown, 
+  Check, 
+  DollarSign, 
+  BarChart2, 
+  RefreshCw, 
+  PieChart as PieChartIcon,
+  TrendingUp, 
+  Layers, 
+  Award, 
+  Zap
 } from 'lucide-react';
 import {
     PieChart, Pie, Cell, 
@@ -20,7 +27,10 @@ import {
 import * as reportsService from '../db/reports.js';
 
 const Reports = () => {
-    const [activeReport, setActiveReport] = useState('expense-breakdown');
+    const [activeReport, setActiveReport] = useState('income-expense');
+    const [selectedMonth, setSelectedMonth] = useState(null);
+    const [activeBreakdownTab, setActiveBreakdownTab] = useState('expense'); // 'expense' or 'income'
+
     const [dateRange, setDateRange] = useState('month');
     const [customStartDate, setCustomStartDate] = useState('');
     const [customEndDate, setCustomEndDate] = useState('');
@@ -35,15 +45,17 @@ const Reports = () => {
     const [spendingTrends, setSpendingTrends] = useState([]);
     const [financialGoals, setFinancialGoals] = useState([]);
     const [topMerchants, setTopMerchants] = useState([]);
+    const [incomeByCategory, setIncomeByCategory] = useState([]);
+    const [topIncomeSources, setTopIncomeSources] = useState([]);
    
     const reportsList = [
-      { id: 'expense-breakdown', name: 'Expense Breakdown', icon: <PieChartIcon size={18} /> },
       { id: 'income-expense', name: 'Income vs Expenses', icon: <BarChart2 size={18} /> },
       { id: 'budget-performance', name: 'Budget Performance', icon: <Layers size={18} /> },
       { id: 'spending-trends', name: 'Spending Trends', icon: <TrendingUp size={18} /> },
       { id: 'savings-analysis', name: 'Savings Analysis', icon: <DollarSign size={18} /> },
       { id: 'goals-progress', name: 'Financial Goals', icon: <Award size={18} /> },
-      { id: 'merchant-analysis', name: 'Top Merchants', icon: <Zap size={18} /> }
+      { id: 'merchant-analysis', name: 'Top Merchants', icon: <Zap size={18} /> },
+      { id: 'income-sources', name: 'Top Income Sources', icon: <TrendingUp size={18} /> }
     ];
 
     // Initialize dates on component mount
@@ -94,9 +106,17 @@ const Reports = () => {
       setIsLoading(true);
       
       try {
-        // Always fetch category data (used in multiple reports)
-        const expenses = await reportsService.fetchExpensesByCategory(startDate, endDate);
-        setCategoryData(expenses);
+        // Only fetch expense category data when needed
+        if (['income-expense'].includes(activeReport) || activeBreakdownTab === 'expense') {
+          const expenses = await reportsService.fetchExpensesByCategory(startDate, endDate, selectedMonth);
+          setCategoryData(expenses);
+        }
+        
+        // Get income category data when needed
+        if (['income-expense'].includes(activeReport) || activeBreakdownTab === 'income') {
+          const incomeData = await reportsService.fetchIncomeByCategory(startDate, endDate, selectedMonth);
+          setIncomeByCategory(incomeData);
+        }
         
         // Get monthly data for income/expense comparison and savings analysis
         if (['income-expense', 'savings-analysis'].includes(activeReport)) {
@@ -129,6 +149,12 @@ const Reports = () => {
           setTopMerchants(merchants);
         }
         
+        // Get top income sources data
+        if (activeReport === 'income-sources') {
+          const sources = await reportsService.fetchTopIncomeSources(startDate, endDate);
+          setTopIncomeSources(sources);
+        }
+        
       } catch (error) {
         console.error('Error fetching report data:', error);
       } finally {
@@ -138,6 +164,16 @@ const Reports = () => {
 
     const handleReportChange = (reportId) => {
       setActiveReport(reportId);
+    };
+
+    const handleMonthClick = (data) => {
+      setSelectedMonth(data.month);
+      // Refetch data for the selected month
+      fetchReportData();
+    };
+
+    const handleBreakdownTabChange = (tab) => {
+      setActiveBreakdownTab(tab);
     };
     
     const COLORS = ['#10B981', '#3B82F6', '#F59E0B', '#8B5CF6', '#EF4444', '#6B7280', '#EC4899', '#14B8A6'];
@@ -153,143 +189,263 @@ const Reports = () => {
       }
       
       switch (activeReport) {
-        case 'expense-breakdown':
-          return (
-            <div className="bg-white p-6 rounded-lg shadow">
-              <h3 className="text-lg font-semibold mb-4">Expense Breakdown by Category</h3>
-              
-              {categoryData.length === 0 ? (
-                <div className="text-center p-8 text-gray-500">
-                  <p>No expense data available for the selected period.</p>
-                </div>
-              ) : (
-                <div className="flex flex-col md:flex-row">
-                  <div className="w-full md:w-1/2 h-64">
-                    <ResponsiveContainer width="100%" height={250}>
-                      <PieChart>
-                        <Pie
-                          data={categoryData}
-                          cx="50%"
-                          cy="50%"
-                          innerRadius={60}
-                          outerRadius={80}
-                          fill="#8884d8"
-                          paddingAngle={2}
-                          dataKey="value"
-                          // Remove the label property
-                        >
-                          {categoryData.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={entry.color || COLORS[index % COLORS.length]} />
-                          ))}
-                        </Pie>
-                        <Tooltip formatter={(value) => `$${value.toFixed(2)}`} />
-                        <Legend layout="vertical" align="right" verticalAlign="middle" />
-                      </PieChart>
-                    </ResponsiveContainer>
-                  </div>
-                  <div className="w-full md:w-1/2 mt-4 md:mt-0">
-                    <div className="overflow-x-auto">
-                      <table className="min-w-full divide-y divide-gray-200">
-                        <thead className="bg-gray-50">
-                          <tr>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Percentage</th>
-                          </tr>
-                        </thead>
-                        <tbody className="bg-white divide-y divide-gray-200">
-                          {categoryData.map((category, index) => {
-                            const totalValue = categoryData.reduce((sum, item) => sum + item.value, 0);
-                            const percentage = ((category.value / totalValue) * 100).toFixed(1);
-                            
-                            return (
-                              <tr key={index} className="hover:bg-gray-50">
-                                <td className="px-6 py-4 whitespace-nowrap">
-                                  <div className="flex items-center">
-                                    <div className="h-3 w-3 rounded-full mr-2" style={{ backgroundColor: category.color || COLORS[index % COLORS.length] }}></div>
-                                    <div className="text-sm font-medium text-gray-900">{category.name}</div>
-                                  </div>
-                                </td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${category.value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{percentage}%</td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        
         case 'income-expense':
-          return (
-            <div className="bg-white p-6 rounded-lg shadow">
-              <h3 className="text-lg font-semibold mb-4">Income vs Expenses</h3>
-              
-              {monthlyData.length === 0 ? (
-                <div className="text-center p-8 text-gray-500">
-                  <p>No income and expense data available.</p>
+  return (
+    <div className="bg-white p-6 rounded-lg shadow">
+      <h3 className="text-lg font-semibold mb-4">Income vs Expenses</h3>
+      
+      {monthlyData.length === 0 ? (
+        <div className="text-center p-8 text-gray-500">
+          <p>No income and expense data available.</p>
+        </div>
+      ) : (
+        <>
+          <div className="h-64 mb-6">
+            <ResponsiveContainer width="100%" height={250}>
+              <BarChart 
+                data={monthlyData} 
+                margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+                onClick={(data) => {
+                  if (data && data.activePayload && data.activePayload[0]) {
+                    handleMonthClick(data.activePayload[0].payload);
+                  }
+                }}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="month" />
+                <YAxis tickFormatter={(value) => `$${value}`} />
+                <Tooltip 
+                  formatter={(value) => [`$${value.toFixed(2)}`, value === 'income' ? 'Income' : 'Expenses']}
+                  contentStyle={{ backgroundColor: '#fff', borderRadius: '8px', boxShadow: '0 2px 5px rgba(0,0,0,0.1)' }}
+                />
+                <Legend />
+                <Bar dataKey="income" name="Income" fill="#10B981" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="expense" name="Expenses" fill="#EF4444" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+            {selectedMonth && (
+              <div className="text-center text-sm text-blue-600 mt-2">
+                Viewing breakdown for: {selectedMonth}
+                <button 
+                  onClick={() => {
+                    setSelectedMonth(null);
+                    fetchReportData();
+                  }}
+                  className="ml-2 text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full hover:bg-blue-200"
+                >
+                  Clear Selection
+                </button>
+              </div>
+            )}
+          </div>
+          
+          <div className="mt-6">
+            <h4 className="text-md font-medium mb-3">Summary</h4>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="bg-green-50 p-4 rounded-lg border border-green-100">
+                <div className="flex items-center mb-2">
+                  <DollarSign className="text-green-600 mr-2" size={18} />
+                  <p className="text-sm text-gray-700 font-medium">Total Income</p>
                 </div>
-              ) : (
-                <>
-                  <div className="h-64 mb-6">
-                    <ResponsiveContainer width="100%" height={250}>
-                      <BarChart data={monthlyData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                        <XAxis dataKey="month" />
-                        <YAxis tickFormatter={(value) => `$${value}`} />
-                        <Tooltip 
-                          formatter={(value) => [`$${value.toFixed(2)}`, value === 'income' ? 'Income' : 'Expenses']}
-                          contentStyle={{ backgroundColor: '#fff', borderRadius: '8px', boxShadow: '0 2px 5px rgba(0,0,0,0.1)' }}
-                        />
-                        <Legend />
-                        <Bar dataKey="income" name="Income" fill="#10B981" radius={[4, 4, 0, 0]} />
-                        <Bar dataKey="expense" name="Expenses" fill="#EF4444" radius={[4, 4, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
+                <p className="text-xl font-bold text-green-600">
+                  ${monthlyData.reduce((sum, item) => sum + item.income, 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </p>
+              </div>
+              <div className="bg-red-50 p-4 rounded-lg border border-red-100">
+                <div className="flex items-center mb-2">
+                  <ArrowUpDown className="text-red-600 mr-2" size={18} />
+                  <p className="text-sm text-gray-700 font-medium">Total Expenses</p>
+                </div>
+                <p className="text-xl font-bold text-red-600">
+                  ${monthlyData.reduce((sum, item) => sum + item.expense, 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </p>
+              </div>
+              <div className="bg-blue-50 p-4 rounded-lg border border-blue-100">
+                <div className="flex items-center mb-2">
+                  <Layers className="text-blue-600 mr-2" size={18} />
+                  <p className="text-sm text-gray-700 font-medium">Net Savings</p>
+                </div>
+                <p className="text-xl font-bold text-blue-600">
+                  ${(monthlyData.reduce((sum, item) => sum + item.income, 0) - 
+                    monthlyData.reduce((sum, item) => sum + item.expense, 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </p>
+              </div>
+            </div>
+          </div>
+          
+          {/* Breakdown tabs */}
+          <div className="mt-8">
+            <div className="border-b border-gray-200">
+              <nav className="-mb-px flex" aria-label="Tabs">
+                <button
+                  onClick={() => handleBreakdownTabChange('expense')}
+                  className={`w-1/2 py-4 px-1 text-center border-b-2 font-medium text-sm ${
+                    activeBreakdownTab === 'expense'
+                      ? 'border-red-500 text-red-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  Expense Breakdown
+                </button>
+                <button
+                  onClick={() => handleBreakdownTabChange('income')}
+                  className={`w-1/2 py-4 px-1 text-center border-b-2 font-medium text-sm ${
+                    activeBreakdownTab === 'income'
+                      ? 'border-green-500 text-green-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  Income Breakdown
+                </button>
+              </nav>
+            </div>
+            
+            {/* Expense breakdown tab content */}
+            {activeBreakdownTab === 'expense' && (
+              <div className="mt-4">
+                <h4 className="text-md font-medium mb-4">Expense Breakdown by Category</h4>
+                
+                {categoryData.length === 0 ? (
+                  <div className="text-center p-8 text-gray-500">
+                    <p>No expense data available for the selected period.</p>
                   </div>
-                  <div className="mt-6">
-                    <h4 className="text-md font-medium mb-3">Summary</h4>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      <div className="bg-green-50 p-4 rounded-lg border border-green-100">
-                        <div className="flex items-center mb-2">
-                          <DollarSign className="text-green-600 mr-2" size={18} />
-                          <p className="text-sm text-gray-700 font-medium">Total Income</p>
-                        </div>
-                        <p className="text-xl font-bold text-green-600">
-                          ${monthlyData.reduce((sum, item) => sum + item.income, 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </p>
-                      </div>
-                      <div className="bg-red-50 p-4 rounded-lg border border-red-100">
-                        <div className="flex items-center mb-2">
-                          <ArrowUpDown className="text-red-600 mr-2" size={18} />
-                          <p className="text-sm text-gray-700 font-medium">Total Expenses</p>
-                        </div>
-                        <p className="text-xl font-bold text-red-600">
-                          ${monthlyData.reduce((sum, item) => sum + item.expense, 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </p>
-                      </div>
-                      <div className="bg-blue-50 p-4 rounded-lg border border-blue-100">
-                        <div className="flex items-center mb-2">
-                          <Layers className="text-blue-600 mr-2" size={18} />
-                          <p className="text-sm text-gray-700 font-medium">Net Savings</p>
-                        </div>
-                        <p className="text-xl font-bold text-blue-600">
-                          ${(monthlyData.reduce((sum, item) => sum + item.income, 0) - 
-                            monthlyData.reduce((sum, item) => sum + item.expense, 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </p>
+                ) : (
+                  <div className="flex flex-col md:flex-row">
+                    <div className="w-full md:w-1/2 h-64">
+                      <ResponsiveContainer width="100%" height={250}>
+                        <PieChart>
+                          <Pie
+                            data={categoryData}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={60}
+                            outerRadius={80}
+                            fill="#8884d8"
+                            paddingAngle={2}
+                            dataKey="value"
+                          >
+                            {categoryData.map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={entry.color || COLORS[index % COLORS.length]} />
+                            ))}
+                          </Pie>
+                          <Tooltip formatter={(value) => `$${value.toFixed(2)}`} />
+                          <Legend layout="vertical" align="right" verticalAlign="middle" />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <div className="w-full md:w-1/2 mt-4 md:mt-0">
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full divide-y divide-gray-200">
+                          <thead className="bg-gray-50">
+                            <tr>
+                              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
+                              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</th>
+                              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Percentage</th>
+                            </tr>
+                          </thead>
+                          <tbody className="bg-white divide-y divide-gray-200">
+                            {categoryData.map((category, index) => {
+                              const totalValue = categoryData.reduce((sum, item) => sum + item.value, 0);
+                              const percentage = ((category.value / totalValue) * 100).toFixed(1);
+                              
+                              return (
+                                <tr key={index} className="hover:bg-gray-50">
+                                  <td className="px-6 py-4 whitespace-nowrap">
+                                    <div className="flex items-center">
+                                      <div className="h-3 w-3 rounded-full mr-2" style={{ backgroundColor: category.color || COLORS[index % COLORS.length] }}></div>
+                                      <div className="text-sm font-medium text-gray-900">{category.name}</div>
+                                    </div>
+                                  </td>
+                                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${category.value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{percentage}%</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
                       </div>
                     </div>
                   </div>
-                </>
-              )}
-            </div>
-          );
+                )}
+              </div>
+            )}
+            
+            {/* Income breakdown tab content */}
+            {activeBreakdownTab === 'income' && (
+              <div className="mt-4">
+                <h4 className="text-md font-medium mb-4">Income Breakdown by Category</h4>
+                
+                {incomeByCategory.length === 0 ? (
+                  <div className="text-center p-8 text-gray-500">
+                    <p>No income data available for the selected period.</p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col md:flex-row">
+                    <div className="w-full md:w-1/2 h-64">
+                      <ResponsiveContainer width="100%" height={250}>
+                        <PieChart>
+                          <Pie
+                            data={incomeByCategory}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={60}
+                            outerRadius={80}
+                            fill="#8884d8"
+                            paddingAngle={2}
+                            dataKey="value"
+                          >
+                            {incomeByCategory.map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={entry.color || COLORS[index % COLORS.length]} />
+                            ))}
+                          </Pie>
+                          <Tooltip formatter={(value) => `$${value.toFixed(2)}`} />
+                          <Legend layout="vertical" align="right" verticalAlign="middle" />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <div className="w-full md:w-1/2 mt-4 md:mt-0">
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full divide-y divide-gray-200">
+                          <thead className="bg-gray-50">
+                            <tr>
+                              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
+                              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</th>
+                              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Percentage</th>
+                            </tr>
+                          </thead>
+                          <tbody className="bg-white divide-y divide-gray-200">
+                            {incomeByCategory.map((category, index) => {
+                              const totalValue = incomeByCategory.reduce((sum, item) => sum + item.value, 0);
+                              const percentage = ((category.value / totalValue) * 100).toFixed(1);
+                              
+                              return (
+                                <tr key={index} className="hover:bg-gray-50">
+                                  <td className="px-6 py-4 whitespace-nowrap">
+                                    <div className="flex items-center">
+                                      <div className="h-3 w-3 rounded-full mr-2" style={{ backgroundColor: category.color || COLORS[index % COLORS.length] }}></div>
+                                      <div className="text-sm font-medium text-gray-900">{category.name}</div>
+                                    </div>
+                                  </td>
+                                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${category.value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{percentage}%</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
           
-        // Continuing from the budget-performance case
+// Fixed budget-performance case
 case 'budget-performance':
   return (
     <div className="bg-white p-6 rounded-lg shadow">
@@ -313,7 +469,10 @@ case 'budget-performance':
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {budgetData.map((item, index) => {
-                const percentage = (item.spent / item.budget) * 100;
+                // Use the correct property names that match your API response
+                const budget = item.budgeted || 0;
+                const spent = item.spent || 0;
+                const percentage = (spent / budget) * 100 || 0;
                 let progressColor = 'bg-green-500';
                 if (percentage > 90) progressColor = 'bg-red-500';
                 else if (percentage > 75) progressColor = 'bg-yellow-500';
@@ -327,13 +486,13 @@ case 'budget-performance':
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      ${item.budget.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      ${budget.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      ${item.spent.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      ${spent.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      ${(item.budget - item.spent).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      ${(budget - spent).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="w-full bg-gray-200 rounded-full h-2.5">
@@ -368,7 +527,7 @@ case 'budget-performance':
                   contentStyle={{ backgroundColor: '#fff', borderRadius: '8px', boxShadow: '0 2px 5px rgba(0,0,0,0.1)' }}
                 />
                 <Legend />
-                <Bar dataKey="budget" name="Budget" fill="#3B82F6" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="budgeted" name="Budget" fill="#3B82F6" radius={[4, 4, 0, 0]} />
                 <Bar dataKey="spent" name="Spent" fill="#10B981" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
@@ -377,7 +536,6 @@ case 'budget-performance':
       )}
     </div>
   );
-
 case 'spending-trends':
   return (
     <div className="bg-white p-6 rounded-lg shadow">
@@ -780,7 +938,102 @@ case 'merchant-analysis':
       )}
     </div>
   );
-
+  case 'income-sources':
+    return (
+      <div className="bg-white p-6 rounded-lg shadow">
+        <h3 className="text-lg font-semibold mb-4">Top Income Sources</h3>
+        
+        {topIncomeSources.length === 0 ? (
+          <div className="text-center p-8 text-gray-500">
+            <p>No income source data available for the selected period.</p>
+          </div>
+        ) : (
+          <>
+            <div className="h-64 mb-6">
+              <ResponsiveContainer width="100%" height={250}>
+                <BarChart 
+                  data={topIncomeSources} 
+                  layout="vertical" 
+                  margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" horizontal={false} />
+                  <XAxis type="number" tickFormatter={(value) => `$${value}`} />
+                  <YAxis type="category" dataKey="source" width={150} />
+                  <Tooltip 
+                    formatter={(value) => `$${value.toFixed(2)}`}
+                    contentStyle={{ backgroundColor: '#fff', borderRadius: '8px', boxShadow: '0 2px 5px rgba(0,0,0,0.1)' }}
+                  />
+                  <Bar 
+                    dataKey="total" 
+                    name="Total Income" 
+                    fill="#10B981" 
+                    radius={[0, 4, 4, 0]} 
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            
+            <div className="mt-6">
+              <h4 className="text-md font-medium mb-3">Income Sources</h4>
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rank</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Source</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total Income</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">% of Income</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {topIncomeSources.map((source, index) => {
+                      const totalIncome = topIncomeSources.reduce((sum, s) => sum + s.total, 0);
+                      const percentage = (source.total / totalIncome * 100).toFixed(1);
+                      
+                      return (
+                        <tr key={index} className="hover:bg-gray-50">
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                            #{index + 1}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            {source.source}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            ${source.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {percentage}%
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              
+              {topIncomeSources.length > 0 && (
+                <div className="mt-6 p-4 bg-green-50 rounded-lg border border-green-100">
+                  <div className="flex items-center mb-2">
+                    <TrendingUp className="text-green-600 mr-2" size={18} />
+                    <p className="text-sm font-medium text-gray-700">Income Insight</p>
+                  </div>
+                  <p className="text-sm text-gray-700">
+                    Your top income source ({topIncomeSources[0].source}) represents {
+                      (topIncomeSources[0].total / topIncomeSources.reduce((sum, s) => sum + s.total, 0) * 100).toFixed(1)
+                    }% of your total income in this period. {
+                      (topIncomeSources[0].total / topIncomeSources.reduce((sum, s) => sum + s.total, 0)) > 0.5 ?
+                      "Consider diversifying your income sources to reduce financial risk." :
+                      "You have a good distribution of income sources, which helps maintain financial stability."
+                    }
+                  </p>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    );
+  
         default:
           return (
             <div className="bg-white p-6 rounded-lg shadow">
@@ -795,13 +1048,6 @@ case 'merchant-analysis':
         <div className="container mx-auto px-4 py-6">
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-xl font-bold text-gray-800">Financial Reports</h2>
-            <div className="flex space-x-3">
-              <div className="relative">
-                <button className="flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
-                  <Download size={16} className="mr-1" /> Export
-                </button>
-              </div>
-            </div>
           </div>
           
           <div className="flex flex-col md:flex-row gap-4">
@@ -918,31 +1164,6 @@ case 'merchant-analysis':
               {/* Current Report */}
               <div className="mb-4">
                 {renderReportContent()}
-              </div>
-              
-              {/* Additional Insights */}
-              <div className="bg-white p-6 rounded-lg shadow">
-                <h3 className="text-lg font-semibold mb-4">Additional Insights</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="bg-purple-50 p-4 rounded-lg border border-purple-100">
-                    <h4 className="text-md font-medium mb-2 flex items-center">
-                      <TrendingUp className="text-purple-600 mr-2" size={18} />
-                      Spending Pattern
-                    </h4>
-                    <p className="text-sm text-gray-700">
-                      Your highest spending days are typically on weekends, with an average of $142.50 more spent compared to weekdays.
-                    </p>
-                  </div>
-                  <div className="bg-yellow-50 p-4 rounded-lg border border-yellow-100">
-                    <h4 className="text-md font-medium mb-2 flex items-center">
-                      <Zap className="text-yellow-600 mr-2" size={18} />
-                      Recommendation
-                    </h4>
-                    <p className="text-sm text-gray-700">
-                      Consider setting aside 15% more for your "Emergency Fund" to reach your target goal by the end of the year.
-                    </p>
-                  </div>
-                </div>
               </div>
             </div>
           </div>

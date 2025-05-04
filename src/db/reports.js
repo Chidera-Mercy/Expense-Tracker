@@ -1,236 +1,5 @@
 import supabase from "./supabase";
 
-// Fetch expense data grouped by category within a date range
-export async function fetchExpensesByCategory(startDate, endDate) {
-  const { data, error } = await supabase
-    .from('expenses')
-    .select(`
-      amount,
-      date,
-      categories:category_id (id, name, color)
-    `)
-    .gte('date', startDate)
-    .lte('date', endDate)
-    .order('date', { ascending: false });
-
-  if (error) {
-    console.error('Error fetching expenses by category:', error);
-    return [];
-  }
-
-  // Group expenses by category
-  const groupedExpenses = data.reduce((acc, expense) => {
-    if (!expense.categories) return acc;
-    
-    const categoryName = expense.categories.name;
-    const categoryColor = expense.categories.color || '#6B7280'; // Default color if none is set
-    
-    if (!acc[categoryName]) {
-      acc[categoryName] = {
-        name: categoryName,
-        value: 0,
-        color: categoryColor
-      };
-    }
-    
-    acc[categoryName].value += parseFloat(expense.amount);
-    return acc;
-  }, {});
-
-  return Object.values(groupedExpenses);
-}
-
-// Fetch monthly expense and income data
-export async function fetchMonthlyFinancials(year) {
-  try {
-    // Get monthly expenses
-    const { data: expenseData, error: expenseError } = await supabase
-      .rpc('get_monthly_expenses', { year_param: year });
-
-    // Get monthly income
-    const { data: incomeData, error: incomeError } = await supabase
-      .rpc('get_monthly_income', { year_param: year });
-
-    if (expenseError) {
-      console.error('Error fetching monthly expenses:', expenseError);
-      throw expenseError;
-    }
-
-    if (incomeError) {
-      console.error('Error fetching monthly income:', incomeError);
-      throw incomeError;
-    }
-
-    // Create month mapping
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    
-    // Initialize result array with all months
-    const result = months.map((month, index) => ({
-      month,
-      expense: 0,
-      income: 0,
-      monthNumber: index + 1
-    }));
-
-    // Fill in expense data
-    if (expenseData && expenseData.length > 0) {
-      expenseData.forEach(item => {
-        const monthIndex = parseInt(item.month) - 1;
-        if (monthIndex >= 0 && monthIndex < 12) {
-          result[monthIndex].expense = parseFloat(item.total_amount) || 0;
-        }
-      });
-    }
-
-    // Fill in income data
-    if (incomeData && incomeData.length > 0) {
-      incomeData.forEach(item => {
-        const monthIndex = parseInt(item.month) - 1;
-        if (monthIndex >= 0 && monthIndex < 12) {
-          result[monthIndex].income = parseFloat(item.total_amount) || 0;
-        }
-      });
-    }
-
-    return result;
-  } catch (error) {
-    console.error('Error in fetchMonthlyFinancials:', error);
-    return [];
-  }
-}
-
-// Fetch budget performance data
-export async function fetchBudgetPerformance(startDate, endDate) {
-  // Get active budgets
-  const { data: budgets, error: budgetError } = await supabase
-    .from('budgets')
-    .select(`
-      id,
-      amount,
-      name,
-      categories:category_id (id, name, color)
-    `)
-    .lte('period_start', endDate)
-    .gte('period_end', startDate);
-
-  if (budgetError) {
-    console.error('Error fetching budgets:', budgetError);
-    return [];
-  }
-
-  // For each budget, get the total spent amount
-  const budgetPerformance = [];
-  
-  for (const budget of budgets) {
-    const categoryId = budget.categories?.id;
-    if (!categoryId) continue;
-    
-    const { data: expenses, error: expenseError } = await supabase
-      .from('expenses')
-      .select('amount')
-      .eq('category_id', categoryId)
-      .gte('date', startDate)
-      .lte('date', endDate);
-      
-    if (expenseError) {
-      console.error('Error fetching expenses for budget:', expenseError);
-      continue;
-    }
-    
-    const spent = expenses.reduce((sum, expense) => sum + parseFloat(expense.amount), 0);
-    
-    budgetPerformance.push({
-      category: budget.categories.name || budget.name,
-      budget: parseFloat(budget.amount),
-      spent: spent,
-      color: budget.categories.color || '#6B7280'
-    });
-  }
-
-  return budgetPerformance;
-}
-
-// Fetch spending trends (daily expenses for a given period)
-export async function fetchSpendingTrends(startDate, endDate) {
-  const { data, error } = await supabase
-    .from('expenses')
-    .select('date, amount')
-    .gte('date', startDate)
-    .lte('date', endDate)
-    .order('date', { ascending: true });
-
-  if (error) {
-    console.error('Error fetching spending trends:', error);
-    return [];
-  }
-
-  // Group expenses by date
-  const groupedByDate = data.reduce((acc, expense) => {
-    const date = expense.date;
-    if (!acc[date]) {
-      acc[date] = {
-        date,
-        expense: 0
-      };
-    }
-    acc[date].expense += parseFloat(expense.amount);
-    return acc;
-  }, {});
-
-  return Object.values(groupedByDate);
-}
-
-// Fetch financial goals data
-export async function fetchFinancialGoals() {
-  const { data, error } = await supabase
-    .from('financial_goals')
-    .select('*')
-    .order('deadline', { ascending: true });
-
-  if (error) {
-    console.error('Error fetching financial goals:', error);
-    return [];
-  }
-
-  return data.map(goal => ({
-    ...goal,
-    target_amount: parseFloat(goal.target_amount),
-    current_amount: parseFloat(goal.current_amount),
-    progress: (parseFloat(goal.current_amount) / parseFloat(goal.target_amount)) * 100
-  }));
-}
-
-// Fetch top spending merchants
-export async function fetchTopMerchants(startDate, endDate, limit = 5) {
-  const { data, error } = await supabase
-    .from('expenses')
-    .select('merchant, amount')
-    .gte('date', startDate)
-    .lte('date', endDate);
-
-  if (error) {
-    console.error('Error fetching top merchants:', error);
-    return [];
-  }
-
-  // Group by merchant and sum amounts
-  const merchantTotals = data.reduce((acc, expense) => {
-    const merchant = expense.merchant;
-    if (!acc[merchant]) {
-      acc[merchant] = {
-        merchant,
-        total: 0
-      };
-    }
-    acc[merchant].total += parseFloat(expense.amount);
-    return acc;
-  }, {});
-
-  // Convert to array, sort by total descending, and take top N
-  return Object.values(merchantTotals)
-    .sort((a, b) => b.total - a.total)
-    .slice(0, limit);
-}
 
 // Helper functions for date ranges
 export function getDateRanges() {
@@ -272,3 +41,445 @@ export function getDateRanges() {
 export function formatDate(date) {
   return date.toISOString().split('T')[0];
 }
+
+// Fetch expenses by category, with optional month filter
+export const fetchExpensesByCategory = async (startDate, endDate, selectedMonth = null) => {
+  try {
+    
+    // Base query
+    let query = supabase
+      .from('expenses')
+      .select(`
+        amount,
+        date,
+        categories:category_id (id, name, color)
+      `)
+      .gte('date', startDate)
+      .lte('date', endDate);
+    
+    // Add month filter if selected
+    if (selectedMonth) {
+      // Convert month name to month number (1-12)
+      const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 
+                          'July', 'August', 'September', 'October', 'November', 'December'];
+      const monthNumber = monthNames.indexOf(selectedMonth) + 1;
+      
+      if (monthNumber > 0) {
+        // Extract month from date (Postgres specific syntax)
+        query = query.filter('EXTRACT(MONTH FROM date)', 'eq', monthNumber);
+      }
+    }
+    
+    const { data, error } = await query;
+    
+    if (error) throw error;
+    
+    // Group expenses by category
+    const categoryMap = {};
+    
+    data.forEach(expense => {
+      const category = expense.categories ? expense.categories.name : 'Uncategorized';
+      const color = expense.categories ? expense.categories.color : '#6B7280';
+      
+      if (!categoryMap[category]) {
+        categoryMap[category] = {
+          name: category,
+          value: 0,
+          color: color
+        };
+      }
+      
+      categoryMap[category].value += parseFloat(expense.amount);
+    });
+    
+    // Convert to array and sort by value
+    return Object.values(categoryMap).sort((a, b) => b.value - a.value);
+  } catch (error) {
+    console.error('Error fetching expenses by category:', error);
+    return [];
+  }
+};
+
+// Fetch income by category, with optional month filter
+export const fetchIncomeByCategory = async (startDate, endDate, selectedMonth = null) => {
+  try {
+    
+    
+    // Base query
+    let query = supabase
+      .from('income')
+      .select(`
+        amount,
+        date,
+        income_categories:category_id (id, name, color)
+      `)
+      .gte('date', startDate)
+      .lte('date', endDate);
+    
+    // Add month filter if selected
+    if (selectedMonth) {
+      // Convert month name to month number (1-12)
+      const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 
+                          'July', 'August', 'September', 'October', 'November', 'December'];
+      const monthNumber = monthNames.indexOf(selectedMonth) + 1;
+      
+      if (monthNumber > 0) {
+        // Extract month from date (Postgres specific syntax)
+        query = query.filter('EXTRACT(MONTH FROM date)', 'eq', monthNumber);
+      }
+    }
+    
+    const { data, error } = await query;
+    
+    if (error) throw error;
+    
+    // Group income by category
+    const categoryMap = {};
+    
+    data.forEach(income => {
+      const category = income.income_categories ? income.income_categories.name : 'Uncategorized';
+      const color = income.income_categories ? income.income_categories.color : '#10B981';
+      
+      if (!categoryMap[category]) {
+        categoryMap[category] = {
+          name: category,
+          value: 0,
+          color: color
+        };
+      }
+      
+      categoryMap[category].value += parseFloat(income.amount);
+    });
+    
+    // Convert to array and sort by value
+    return Object.values(categoryMap).sort((a, b) => b.value - a.value);
+  } catch (error) {
+    console.error('Error fetching income by category:', error);
+    return [];
+  }
+};
+
+// Fetch monthly financials for a given year
+export const fetchMonthlyFinancials = async (year) => {
+  try {
+    
+    
+    // Get all expenses for the year
+    const { data: expenses, error: expensesError } = await supabase
+      .from('expenses')
+      .select('amount, date')
+      .gte('date', `${year}-01-01`)
+      .lte('date', `${year}-12-31`);
+    
+    if (expensesError) throw expensesError;
+    
+    // Get all income for the year
+    const { data: incomes, error: incomesError } = await supabase
+      .from('income')
+      .select('amount, date')
+      .gte('date', `${year}-01-01`)
+      .lte('date', `${year}-12-31`);
+    
+    if (incomesError) throw incomesError;
+    
+    // Create monthly summary
+    const months = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'
+    ];
+    
+    const monthlyData = months.map((month, index) => {
+      const monthNumber = index + 1;
+      
+      // Filter expenses for this month
+      const monthExpenses = expenses.filter(expense => {
+        const expenseDate = new Date(expense.date);
+        return expenseDate.getMonth() === index;
+      });
+      
+      // Filter income for this month
+      const monthIncome = incomes.filter(income => {
+        const incomeDate = new Date(income.date);
+        return incomeDate.getMonth() === index;
+      });
+      
+      // Calculate totals
+      const totalExpense = monthExpenses.reduce((sum, expense) => 
+        sum + parseFloat(expense.amount), 0);
+      
+      const totalIncome = monthIncome.reduce((sum, income) => 
+        sum + parseFloat(income.amount), 0);
+      
+      return {
+        month,
+        expense: parseFloat(totalExpense.toFixed(2)),
+        income: parseFloat(totalIncome.toFixed(2)),
+        savings: parseFloat((totalIncome - totalExpense).toFixed(2))
+      };
+    });
+    
+    return monthlyData;
+  } catch (error) {
+    console.error('Error fetching monthly financials:', error);
+    return [];
+  }
+};
+
+// Fetch budget performance data
+export const fetchBudgetPerformance = async (startDate, endDate) => {
+  try {
+    
+    
+    // Fetch all active budgets for the period
+    const { data: budgets, error: budgetError } = await supabase
+      .from('budgets')
+      .select(`
+        id,
+        amount,
+        categories:category_id (id, name, color)
+      `)
+      .lte('period_start', endDate)
+      .gte('period_end', startDate);
+    
+    if (budgetError) throw budgetError;
+    
+    // Fetch expenses for each budget's category
+    const budgetPerformance = await Promise.all(budgets.map(async (budget) => {
+      if (!budget.categories) {
+        return {
+          category: 'Uncategorized',
+          budgeted: parseFloat(budget.amount),
+          spent: 0,
+          remaining: parseFloat(budget.amount),
+          percentage: 0,
+          color: '#6B7280'
+        };
+      }
+      
+      // Get expenses for this category
+      const { data: categoryExpenses, error: expenseError } = await supabase
+        .from('expenses')
+        .select('amount')
+        .eq('category_id', budget.categories.id)
+        .gte('date', startDate)
+        .lte('date', endDate);
+      
+      if (expenseError) throw expenseError;
+      
+      // Calculate total spent
+      const spent = categoryExpenses.reduce((sum, expense) => 
+        sum + parseFloat(expense.amount), 0);
+      
+      // Calculate remaining and percentage
+      const budgeted = parseFloat(budget.amount);
+      const remaining = budgeted - spent;
+      const percentage = (spent / budgeted) * 100;
+      
+      return {
+        category: budget.categories.name,
+        budgeted,
+        spent,
+        remaining,
+        percentage: parseFloat(percentage.toFixed(1)),
+        color: budget.categories.color
+      };
+    }));
+    
+    return budgetPerformance.sort((a, b) => b.percentage - a.percentage);
+  } catch (error) {
+    console.error('Error fetching budget performance:', error);
+    return [];
+  }
+};
+
+// Fetch spending trends (daily expenses for a given period)
+export async function fetchSpendingTrends(startDate, endDate) {
+  const { data, error } = await supabase
+    .from('expenses')
+    .select('date, amount')
+    .gte('date', startDate)
+    .lte('date', endDate)
+    .order('date', { ascending: true });
+
+  if (error) {
+    console.error('Error fetching spending trends:', error);
+    return [];
+  }
+
+  // Group expenses by date
+  const groupedByDate = data.reduce((acc, expense) => {
+    const date = expense.date;
+    if (!acc[date]) {
+      acc[date] = {
+        date,
+        expense: 0
+      };
+    }
+    acc[date].expense += parseFloat(expense.amount);
+    return acc;
+  }, {});
+
+  return Object.values(groupedByDate);
+}
+
+
+// Fetch top income sources
+export const fetchTopIncomeSources = async (startDate, endDate) => {
+  try {
+    
+    
+    const { data, error } = await supabase
+      .from('income')
+      .select(`
+        amount,
+        source,
+        date,
+        income_categories:category_id (id, name, color)
+      `)
+      .gte('date', startDate)
+      .lte('date', endDate);
+    
+    if (error) throw error;
+    
+    // Group income by source
+    const sourceMap = {};
+    
+    data.forEach(income => {
+      const source = income.source;
+      const category = income.income_categories ? income.income_categories.name : 'Uncategorized';
+      const color = income.income_categories ? income.income_categories.color : '#10B981';
+      
+      if (!sourceMap[source]) {
+        sourceMap[source] = {
+          source,
+          total: 0,
+          category,
+          color
+        };
+      }
+      
+      sourceMap[source].total += parseFloat(income.amount);
+    });
+    
+    // Convert to array and sort by total
+    return Object.values(sourceMap)
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 10); // Get top 10 sources
+  } catch (error) {
+    console.error('Error fetching top income sources:', error);
+    return [];
+  }
+};
+
+// Fetch top merchants
+export const fetchTopMerchants = async (startDate, endDate) => {
+  try {
+    
+    
+    const { data: expenses, error } = await supabase
+      .from('expenses')
+      .select(`
+        amount,
+        merchant,
+        date,
+        categories:category_id (id, name, color)
+      `)
+      .gte('date', startDate)
+      .lte('date', endDate);
+    
+    if (error) throw error;
+    
+    // Group expenses by merchant
+    const merchantMap = {};
+    
+    expenses.forEach(expense => {
+      const merchant = expense.merchant;
+      const category = expense.categories ? expense.categories.name : 'Uncategorized';
+      const color = expense.categories ? expense.categories.color : '#6B7280';
+      
+      if (!merchantMap[merchant]) {
+        merchantMap[merchant] = {
+          merchant,
+          total: 0,
+          transactions: 0,
+          categories: {},
+          primaryCategory: '',
+          primaryCategoryColor: ''
+        };
+      }
+      
+      // Increment total and transaction count
+      merchantMap[merchant].total += parseFloat(expense.amount);
+      merchantMap[merchant].transactions += 1;
+      
+      // Track category usage
+      if (!merchantMap[merchant].categories[category]) {
+        merchantMap[merchant].categories[category] = {
+          name: category,
+          count: 0,
+          color
+        };
+      }
+      
+      merchantMap[merchant].categories[category].count += 1;
+    });
+    
+    // Determine primary category for each merchant
+    Object.values(merchantMap).forEach(merchant => {
+      let maxCount = 0;
+      let primaryCategory = '';
+      let primaryColor = '';
+      
+      Object.values(merchant.categories).forEach(category => {
+        if (category.count > maxCount) {
+          maxCount = category.count;
+          primaryCategory = category.name;
+          primaryColor = category.color;
+        }
+      });
+      
+      merchant.primaryCategory = primaryCategory;
+      merchant.primaryCategoryColor = primaryColor;
+      
+      // Convert categories object to array
+      merchant.categories = Object.values(merchant.categories);
+    });
+    
+    // Convert to array and sort by total spent
+    return Object.values(merchantMap)
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 10); // Get top 10 merchants
+  } catch (error) {
+    console.error('Error fetching top merchants:', error);
+    return [];
+  }
+};
+
+// Fetch financial goals
+export const fetchFinancialGoals = async () => {
+  try {
+    
+    const { data, error } = await supabase
+      .from('financial_goals')
+      .select('*')
+      .order('deadline', { ascending: true });
+    
+    if (error) throw error;
+    
+    // Calculate percentage progress for each goal
+    return data.map(goal => {
+      const progress = (goal.current_amount / goal.target_amount) * 100;
+      const daysLeft = Math.ceil((new Date(goal.deadline) - new Date()) / (1000 * 60 * 60 * 24));
+      
+      return {
+        ...goal,
+        progress: parseFloat(progress.toFixed(1)),
+        daysLeft: daysLeft > 0 ? daysLeft : 0
+      };
+    });
+  } catch (error) {
+    console.error('Error fetching financial goals:', error);
+    return [];
+  }
+};
+
