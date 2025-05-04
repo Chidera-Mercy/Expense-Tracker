@@ -3,11 +3,13 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { AuthContextProvider } from './AuthContext';
 import ProtectedRoute from './ProtectedRoute';
 import { CurrencyProvider } from './CurrencyContext';
+
 // Import pages
 import LandingPage from './pages/LandingPage';
 import Signup from './pages/Signup';
 import Login from './pages/Login';
 import Layout from './components/Layout';
+
 // Import all the section pages
 import Dashboard from './pages/Dashboard';
 import Expenses from './pages/Expenses';
@@ -22,7 +24,7 @@ import HelpAndSupport from './pages/HelpAndSupport';
 function App() {
   return (
     <AuthContextProvider>
-      <CurrencyProvider>
+      <CurrencyProvider >
         <Router>
           <Routes>
             {/* Public routes */}
@@ -31,13 +33,12 @@ function App() {
             <Route path="/signup" element={<Signup />} />
             
             {/* Protected routes - require authentication */}
-            <Route path="/app" element={
+            <Route path="/" element={
               <ProtectedRoute>
                 <Layout />
               </ProtectedRoute>
             }>
               {/* Nested routes that will appear within the Layout */}
-              <Route index element={<Navigate to="/app/dashboard" replace />} />
               <Route path="dashboard" element={<Dashboard />} />
               <Route path="expenses" element={<Expenses />} />
               <Route path="income" element={<Income />} />
@@ -47,10 +48,10 @@ function App() {
               <Route path="goals" element={<FinancialGoals />} />
               <Route path="settings" element={<SettingsPage />} />
               <Route path="help" element={<HelpAndSupport />} />
+              
+              {/* Redirect /home to /dashboard */}
+              <Route path="home" element={<Navigate to="/dashboard" replace />} />
             </Route>
-            
-            {/* Redirect /home to /dashboard */}
-            <Route path="/home" element={<Navigate to="/app/dashboard" replace />} />
             
             {/* Catch all - 404 page */}
             <Route path="*" element={<div>404 - Page Not Found</div>} />
