@@ -1,30 +1,45 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  Plus, Edit, Trash2, 
-  ChevronDown, X, Check, 
-  DollarSign, RefreshCw,PieChart,
-  AlertTriangle
+  Plus, 
+  Edit, 
+  Trash2, 
+  ChevronDown, 
+  X, 
+  Check, 
+  RefreshCw,
+  PieChart,
+  AlertTriangle,
+  Notebook
 } from 'lucide-react';
 import { 
-  fetchBudgets, 
+  fetchBudgets,
+  filterBudgetsByMonth, 
+  filterBudgetsByQuarter,
+  filterBudgetsByYear,
+  calculateBudgetSummary,
+  getPeriodOptions,
+  getCurrentPeriod,
   createBudget, 
   updateBudget, 
-  deleteBudget, 
-  getBudgetSummary,
-  getPeriodOptions, 
-  getCurrentPeriod,
-  getNextPeriod,
-  getPreviousPeriod
+  deleteBudget
 } from '../db/budgets.js';
+import { saveCategory, deleteCategory } from '../db/category.js';
 import supabase from '../db/supabase.js';
 import { useCurrency } from '../CurrencyContext.jsx';
+import CategoryModal from '../components/CategoryModal.jsx';
 
 const Budgets = () => {
-  const { formatAmount } = useCurrency();
+  // State management
+  const { formatAmount, symbol } = useCurrency();
+
   const [showAddBudget, setShowAddBudget] = useState(false);
   const [showEditBudget, setShowEditBudget] = useState(false);
-  const [budgets, setBudgets] = useState([]);
+  const [showCategoryModal, setShowCategoryModal] = useState(false);
+
+  const [allBudgets, setAllBudgets] = useState([]); // All budgets fetched from database
+  const [filteredBudgets, setFilteredBudgets] = useState([]); // Filtered budgets based on period
   const [categories, setCategories] = useState([]);
+
   const [periodType, setPeriodType] = useState('monthly');
   const [currentPeriod, setCurrentPeriod] = useState(getCurrentPeriod('monthly'));
   const [periodOptions, setPeriodOptions] = useState({});
@@ -39,9 +54,9 @@ const Budgets = () => {
   const [deleteTargetId, setDeleteTargetId] = useState(null);
   const [newBudget, setNewBudget] = useState({
     category_id: '',
-    name: '',
     amount: '',
-    period_type: 'monthly',
+    month: new Date().getMonth().toString(), // Set default to current month
+    year: new Date().getFullYear().toString(), // Set default to current year
     rollover: false,
     enable_alerts: true,
     notes: ''
@@ -54,28 +69,49 @@ const Budgets = () => {
     loadBudgets();
     loadCategories();
     loadPeriodOptions();
-  }, [currentPeriod, periodType]);
+  }, []);
+
+  // Filter budgets when period or periodType changes
+  useEffect(() => {
+    if (allBudgets.length > 0) {
+      filterBudgetsByPeriod();
+    }
+  }, [allBudgets, currentPeriod, periodType]);
 
   // Load budget data
   const loadBudgets = async () => {
     setIsLoading(true);
     try {
-      const { data, error } = await fetchBudgets(currentPeriod);
+      const { data, error } = await fetchBudgets();
       if (error) throw error;
       
-      setBudgets(data || []);
+      setAllBudgets(data || []);
       
-      // Load budget summary
-      const summary = await getBudgetSummary(currentPeriod);
-      if (summary.error) throw summary.error;
-      
-      setBudgetSummary(summary);
     } catch (err) {
       console.error("Error loading budgets:", err);
       setError("Failed to load budget data. Please try again.");
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // Filter budgets based on selected period and calculate summary
+  const filterBudgetsByPeriod = () => {
+    let filtered = [];
+    
+    if (periodType === 'monthly') {
+      filtered = filterBudgetsByMonth(allBudgets, currentPeriod);
+    } else if (periodType === 'quarterly') {
+      filtered = filterBudgetsByQuarter(allBudgets, currentPeriod);
+    } else if (periodType === 'yearly') {
+      filtered = filterBudgetsByYear(allBudgets, currentPeriod);
+    }
+    
+    setFilteredBudgets(filtered);
+    
+    // Calculate budget summary for the filtered budgets
+    const summary = calculateBudgetSummary(filtered);
+    setBudgetSummary(summary);
   };
 
   // Load user categories
@@ -107,14 +143,20 @@ const Budgets = () => {
 
   // Navigate to previous period
   const goToPreviousPeriod = () => {
-    const previousPeriod = getPreviousPeriod(currentPeriod, periodType);
-    setCurrentPeriod(previousPeriod);
+    const options = periodOptions[periodType] || [];
+    const currentIndex = options.indexOf(currentPeriod);
+    if (currentIndex > 0) {
+      setCurrentPeriod(options[currentIndex - 1]);
+    }
   };
 
   // Navigate to next period
   const goToNextPeriod = () => {
-    const nextPeriod = getNextPeriod(currentPeriod, periodType);
-    setCurrentPeriod(nextPeriod);
+    const options = periodOptions[periodType] || [];
+    const currentIndex = options.indexOf(currentPeriod);
+    if (currentIndex < options.length - 1) {
+      setCurrentPeriod(options[currentIndex + 1]);
+    }
   };
 
   // Handle budget form input change
@@ -140,15 +182,29 @@ const Budgets = () => {
     e.preventDefault();
     
     try {
-      // Calculate period start and end dates based on currentPeriod
-      const { periodStart, periodEnd } = getPeriodDates(currentPeriod);
+      // Calculate period start and end dates directly from month and year in newBudget
+      const { periodStart, periodEnd } = getPeriodDates(newBudget.month, newBudget.year);
+      
+      // Check if a budget already exists for this category and period
+      const existingBudget = allBudgets.find(budget => 
+        budget.category_id === newBudget.category_id && 
+        new Date(budget.period_start).getTime() === new Date(periodStart).getTime()
+      );
+      
+      if (existingBudget) {
+        // Alert user and stop the function execution
+        window.alert("A budget for this category and period already exists.");
+        return;
+      }
       
       const budgetData = {
-        ...newBudget,
+        category_id: newBudget.category_id,
         amount: parseFloat(newBudget.amount),
-        period_type: periodType,
         period_start: periodStart,
-        period_end: periodEnd
+        period_end: periodEnd,
+        rollover: newBudget.rollover,
+        enable_alerts: newBudget.enable_alerts,
+        notes: newBudget.notes
       };
       
       const { data, error } = await createBudget(budgetData);
@@ -157,48 +213,66 @@ const Budgets = () => {
       // Reset form and refresh budgets
       setNewBudget({
         category_id: '',
-        name: '',
         amount: '',
-        period_type: 'monthly',
+        month: new Date().getMonth().toString(), // Set default to current month
+        year: new Date().getFullYear().toString(), // Set default to current year
         rollover: false,
         enable_alerts: true,
         notes: ''
       });
-      setShowAddBudget(false);
+  
       await loadBudgets();
+      filterBudgetsByPeriod();
+      setShowAddBudget(false);
+      
     } catch (err) {
       console.error("Error creating budget:", err);
       setError("Failed to create budget. Please try again.");
     }
   };
+  
 
   // Open edit budget modal
   const handleEditBudgetClick = (budget) => {
-    setEditingBudget(budget);
+    // Extract month and year from period_start
+    const startDate = new Date(budget.period_start);
+    const month = startDate.getMonth();
+    const year = startDate.getFullYear();
+
+    // Add month and year into the budget object before setting it
+    const budgetWithPeriod = {
+      ...budget,
+      month,
+      year,
+    };
+    setEditingBudget(budgetWithPeriod);
     setShowEditBudget(true);
   };
 
   // Submit budget update
   const handleUpdateBudget = async (e) => {
-    e.preventDefault();
-    
+    e.preventDefault();    
     try {
-      const { periodStart, periodEnd } = getPeriodDates(currentPeriod);
+      const { periodStart, periodEnd } = getPeriodDates(editingBudget.month, editingBudget.year);
       
       const budgetData = {
-        ...editingBudget,
+        category_id: editingBudget.category_id,
         amount: parseFloat(editingBudget.amount),
-        period_type: periodType,
         period_start: periodStart,
-        period_end: periodEnd
+        period_end: periodEnd,
+        rollover: editingBudget.rollover,
+        enable_alerts: editingBudget.enable_alerts,
+        notes: editingBudget.notes
       };
       
       const { data, error } = await updateBudget(editingBudget.id, budgetData);
       if (error) throw error;
       
+      await loadBudgets();
+      filterBudgetsByPeriod();
       setShowEditBudget(false);
       setEditingBudget(null);
-      await loadBudgets();
+      
     } catch (err) {
       console.error("Error updating budget:", err);
       setError("Failed to update budget. Please try again.");
@@ -217,9 +291,52 @@ const Budgets = () => {
       const { error } = await deleteBudget(id);
       if (error) throw error;
       await loadBudgets();
+      filterBudgetsByPeriod();
     } catch (err) {
       console.error("Error deleting budget:", err);
       setError("Failed to delete budget. Please try again.");
+    }
+  };
+
+  const handleSaveCategory = async (categoryData) => {
+    try {
+      const savedCategory = await saveCategory(categoryData, 'categories');
+      
+      // Update local state based on whether it's an edit or create
+      if (categoryData.id) {
+        // Update existing category
+        setCategories(prevCategories =>
+          prevCategories.map(cat => 
+            cat.id === savedCategory.id ? savedCategory : cat
+          )
+        );
+      } else {
+        // Add new category
+        setCategories(prevCategories => [...prevCategories, savedCategory]);
+      }
+      
+      return savedCategory;
+    } catch (err) {
+      console.error('Error saving expense category:', err);
+      throw err;
+    }
+  };
+
+  const handleDeleteCategory = async (categoryId) => {
+    try {
+      await deleteCategory(categoryId, 'categories');
+      
+      // Remove the deleted category from state
+      setCategories(prevCategories => 
+        prevCategories.filter(cat => cat.id !== categoryId)
+      );
+      // Remove the budgets with deleted category from state
+      setAllBudgets(prevBudgets => 
+        prevBudgets.filter(budget => budget.category_id !== categoryId)
+      );
+    } catch (err) {
+      console.error('Error deleting expense category:', err);
+      throw err;
     }
   };
 
@@ -250,13 +367,23 @@ const Budgets = () => {
           <h1 className="text-2xl font-bold text-emerald-800">Budget Management
           <span className="ml-2 text-sm font-normal text-gray-500">Plan your budgets</span>
           </h1>
-          <button 
-            onClick={() => setShowAddBudget(true)}
-            className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-md flex items-center shadow-sm transition-colors duration-200"
-          >
-            <Plus size={18} className="mr-1" />
-            <span>Create Budget</span>
-          </button>
+
+          <div className='flex gap-4'>
+            <button 
+              onClick={() => setShowAddBudget(true)}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-md flex items-center shadow-sm transition-colors duration-200"
+            >
+              <span>Create Budget</span>
+            </button>
+
+            <button 
+              onClick={() => setShowCategoryModal(true)}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-md flex items-center shadow-sm transition-colors duration-200"
+            >
+              <span>Manage Categories</span>
+            </button>
+            </div>
+
         </div>
       </header>
 
@@ -366,7 +493,7 @@ const Budgets = () => {
         )}
 
         {/* No budgets message */}
-        {!isLoading && budgets.length === 0 && (
+        {!isLoading && filteredBudgets.length === 0 && (
           <div className="text-center p-12 bg-white rounded-lg shadow-md border border-gray-100">
             <div className="flex flex-col items-center justify-center">
               <div className="bg-emerald-50 p-4 rounded-full mb-4">
@@ -388,76 +515,101 @@ const Budgets = () => {
         )}
 
         {/* Budget cards */}
-        {!isLoading && budgets.length > 0 && (
+        {!isLoading && filteredBudgets.length > 0 && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {budgets.map((budget) => (
+            {filteredBudgets.map((budget) => (
               <div key={budget.id} className="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-lg transition-all border-l-4" style={{ borderLeftColor: getCategoryColor(budget.category_id).replace('bg-', '') }}>
-                <div className="p-5">
-                  <div className="flex justify-between items-center mb-4">
-                    <div className="flex items-center">
-                        <span className={`w-2 h-12 rounded-full mr-3 ${getCategoryColor(budget.category_id)}`}></span>
-                        <div className="flex flex-col">
-                          <h3 className="font-semibold text-lg">{budget.name || getCategoryName(budget.category_id)}</h3>
-                          <div className="flex items-center gap-2">
-                            <span className={`text-sm font-medium text-gray-500`}>
-                              {getCategoryName(budget.category_id)}
-                            </span>
-                            <span className="text-xs text-gray-400">•</span>
-                            <span className="text-sm text-gray-500">{currentPeriod}</span>
-                          </div>
+              <div className="p-5">
+                <div className="flex justify-between items-center mb-4">
+                  <div className="flex items-center">
+                      <span className={`w-2 h-12 rounded-full mr-3 ${getCategoryColor(budget.category_id)}`}></span>
+                      <div className="flex flex-col">
+                        <h3 className="font-semibold text-lg">{getCategoryName(budget.category_id)}</h3>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm text-gray-500">
+                            {new Date(budget.period_start).toLocaleString('default', { month: 'long' })} {new Date(budget.period_start).getFullYear()}
+                          </span>
                         </div>
                       </div>
-                    <div className="flex space-x-2">
-                      <button 
-                        onClick={() => handleEditBudgetClick(budget)}
-                        className="p-2 text-gray-400 hover:text-emerald-600 hover:bg-gray-100 rounded-full transition-colors"
-                      >
-                        <Edit size={16} />
-                      </button>
-                      <button 
-                        onClick={() => handleDeleteClick(budget.id)}
-                        className="p-2 text-gray-400 hover:text-red-600 hover:bg-gray-100 rounded-full transition-colors"
-                      >
-                        <Trash2 size={16} />
-                      </button>
                     </div>
+                  <div className="flex space-x-2">
+                    <button 
+                      onClick={() => handleEditBudgetClick(budget)}
+                      className="p-2 text-gray-400 hover:text-emerald-600 hover:bg-gray-100 rounded-full transition-colors"
+                    >
+                      <Edit size={16} />
+                    </button>
+                    <button 
+                      onClick={() => handleDeleteClick(budget.id)}
+                      className="p-2 text-gray-400 hover:text-red-600 hover:bg-gray-100 rounded-full transition-colors"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                </div>
+                
+                <div className="mb-4">
+                  <div className="flex justify-between mb-1">
+                    <span className="text-2xl font-bold">{formatAmount(parseFloat(budget.amount).toFixed(2))}</span>
+                    <span className={`text-sm py-1 px-2 rounded-full ${
+                      budget.spent/budget.amount > 1 ? 'bg-red-100 text-red-700' : 
+                      budget.spent/budget.amount > 0.9 ? 'bg-yellow-100 text-yellow-700' : 
+                      'bg-emerald-100 text-emerald-700'
+                    }`}>
+                      {Math.round((budget.spent / parseFloat(budget.amount)) * 100)}%
+                    </span>
                   </div>
                   
-                  <div className="mb-4">
-                    <div className="flex justify-between mb-1">
-                      <span className="text-2xl font-bold">{formatAmount(parseFloat(budget.amount).toFixed(2))}</span>
-                      <span className={`text-sm py-1 px-2 rounded-full ${
-                        budget.spent/budget.amount > 1 ? 'bg-red-100 text-red-700' : 
-                        budget.spent/budget.amount > 0.9 ? 'bg-yellow-100 text-yellow-700' : 
-                        'bg-emerald-100 text-emerald-700'
-                      }`}>
-                        {Math.round((budget.spent / parseFloat(budget.amount)) * 100)}%
+                  <div className="w-full bg-gray-100 rounded-full h-3 mb-3">
+                    <div 
+                      className={`h-3 rounded-full ${getBudgetProgressColor(budget.spent / budget.amount)}`} 
+                      style={{ width: `${Math.min(100, (budget.spent / budget.amount) * 100)}%` }}
+                    ></div>
+                  </div>
+                </div>
+                
+                <div className="flex justify-between items-center text-sm">
+                  <div className="flex items-center">
+                    <span className="text-gray-600">{formatAmount(budget.spent.toFixed(2))} spent</span>
+                  </div>
+                  
+                  <div>
+                    {budget.remaining >= 0 ? (
+                      <span className="text-emerald-600 font-medium">{formatAmount(budget.remaining.toFixed(2))} remaining</span>
+                    ) : (
+                      <span className="text-red-600 font-medium">{formatAmount(Math.abs(budget.remaining).toFixed(2))} over budget</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Additional budget details */}
+                <div className="mt-3 pt-3 border-t border-gray-100">
+                  {budget.notes && (
+                      <div className="mb-2 text-sm text-gray-500 flex items-start">
+                        <Notebook size={16} className="mr-1 mt-[2px]" />
+                        <span>
+                          {budget.notes.length > 50
+                            ? budget.notes.substring(0, 50) + '...'
+                            : budget.notes}
+                        </span>
+                      </div>
+                    )}
+                    
+                  <div className="flex flex-wrap gap-2">
+                    {budget.rollover && (
+                      <span className="px-2 py-1 bg-blue-50 text-blue-700 text-xs rounded-md flex items-center">
+                        <RefreshCw size={12} className="mr-1" /> Rollover
                       </span>
-                    </div>
-                    
-                    <div className="w-full bg-gray-100 rounded-full h-3 mb-3">
-                      <div 
-                        className={`h-3 rounded-full ${getBudgetProgressColor(budget.spent / budget.amount)}`} 
-                        style={{ width: `${Math.min(100, (budget.spent / budget.amount) * 100)}%` }}
-                      ></div>
-                    </div>
-                  </div>
-                  
-                  <div className="flex justify-between items-center text-sm">
-                    <div className="flex items-center">
-                      <span className="text-gray-600">{formatAmount(budget.spent.toFixed(2))} spent</span>
-                    </div>
-                    
-                    <div>
-                      {budget.remaining >= 0 ? (
-                        <span className="text-emerald-600 font-medium">{formatAmount(budget.remaining.toFixed(2))} remaining</span>
-                      ) : (
-                        <span className="text-red-600 font-medium">{formatAmount(Math.abs(budget.remaining).toFixed(2))} over budget</span>
-                      )}
-                    </div>
+                    )}
+                    {budget.enable_alerts && (
+                      <span className="px-2 py-1 bg-amber-50 text-amber-700 text-xs rounded-md flex items-center">
+                        <AlertTriangle size={12} className="mr-1" /> Alerts Enabled
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
+            </div>
             ))}
           </div>
         )}
@@ -507,22 +659,12 @@ const Budgets = () => {
                       </div>
                       
                       <div className="mb-4">
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Budget Name (Optional)</label>
-                        <input
-                          type="text"
-                          name="name"
-                          value={newBudget.name}
-                          onChange={handleBudgetInputChange}
-                          placeholder="e.g., Monthly Groceries"
-                          className="block w-full border border-gray-300 rounded-md focus:ring-emerald-500 focus:border-emerald-500 py-2 px-3"
-                        />
-                      </div>
-                      
-                      <div className="mb-4">
                         <label className="block text-sm font-medium text-gray-700 mb-1">Budget Amount</label>
                         <div className="relative rounded-md shadow-sm">
                           <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                            <DollarSign size={16} className="text-gray-400" />
+                          <span className="text-gray-400 text-sm">
+                            {symbol}
+                          </span>
                           </div>
                           <input
                             type="number"
@@ -539,12 +681,47 @@ const Budgets = () => {
                       </div>
                       
                       <div className="mb-4">
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Period</label>
-                        <div className="text-gray-700 py-2 px-3 border border-gray-300 rounded-md bg-gray-50">
-                          {currentPeriod} ({periodType})
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Budget Period</label>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <select
+                              name="month"
+                              value={newBudget.month || new Date().getMonth()}
+                              onChange={handleBudgetInputChange}
+                              className="block w-full border border-gray-300 rounded-md focus:ring-emerald-500 focus:border-emerald-500 py-2 px-3"
+                              required
+                            >
+                              <option value="0">January</option>
+                              <option value="1">February</option>
+                              <option value="2">March</option>
+                              <option value="3">April</option>
+                              <option value="4">May</option>
+                              <option value="5">June</option>
+                              <option value="6">July</option>
+                              <option value="7">August</option>
+                              <option value="8">September</option>
+                              <option value="9">October</option>
+                              <option value="10">November</option>
+                              <option value="11">December</option>
+                            </select>
+                          </div>
+                          <div>
+                            <select
+                              name="year"
+                              value={newBudget.year || new Date().getFullYear()}
+                              onChange={handleBudgetInputChange}
+                              className="block w-full border border-gray-300 rounded-md focus:ring-emerald-500 focus:border-emerald-500 py-2 px-3"
+                              required
+                            >
+                              {/* Generate 3 years in the past and 3 years in the future */}
+                              {Array.from({ length: 7 }, (_, i) => new Date().getFullYear() - 3 + i).map(year => (
+                                <option key={year} value={year}>{year}</option>
+                              ))}
+                            </select>
+                          </div>
                         </div>
                         <p className="text-xs text-gray-500 mt-1">
-                          Budget period is based on your current period selection.
+                          Select the month and year for this budget.
                         </p>
                       </div>
                       
@@ -668,22 +845,12 @@ const Budgets = () => {
                       </div>
                       
                       <div className="mb-4">
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Budget Name (Optional)</label>
-                        <input
-                          type="text"
-                          name="name"
-                          value={editingBudget.name || ''}
-                          onChange={handleBudgetInputChange}
-                          placeholder="e.g., Monthly Groceries"
-                          className="block w-full border border-gray-300 rounded-md focus:ring-emerald-500 focus:border-emerald-500 py-2 px-3"
-                        />
-                      </div>
-                      
-                      <div className="mb-4">
                         <label className="block text-sm font-medium text-gray-700 mb-1">Budget Amount</label>
                         <div className="relative rounded-md shadow-sm">
                           <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                            <DollarSign size={16} className="text-gray-400" />
+                          <span className="text-gray-400 text-sm">
+                            {symbol}
+                          </span>
                           </div>
                           <input
                             type="number"
@@ -700,12 +867,47 @@ const Budgets = () => {
                       </div>
                       
                       <div className="mb-4">
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Period</label>
-                        <div className="text-gray-700 py-2 px-3 border border-gray-300 rounded-md bg-gray-50">
-                          {currentPeriod} ({periodType})
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Budget Period</label>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <select
+                              name="month"
+                              value={editingBudget.month || new Date().getMonth()}
+                              onChange={handleBudgetInputChange}
+                              className="block w-full border border-gray-300 rounded-md focus:ring-emerald-500 focus:border-emerald-500 py-2 px-3"
+                              required
+                            >
+                              <option value="0">January</option>
+                              <option value="1">February</option>
+                              <option value="2">March</option>
+                              <option value="3">April</option>
+                              <option value="4">May</option>
+                              <option value="5">June</option>
+                              <option value="6">July</option>
+                              <option value="7">August</option>
+                              <option value="8">September</option>
+                              <option value="9">October</option>
+                              <option value="10">November</option>
+                              <option value="11">December</option>
+                            </select>
+                          </div>
+                          <div>
+                            <select
+                              name="year"
+                              value={editingBudget.year || new Date().getFullYear()}
+                              onChange={handleBudgetInputChange}
+                              className="block w-full border border-gray-300 rounded-md focus:ring-emerald-500 focus:border-emerald-500 py-2 px-3"
+                              required
+                            >
+                              {/* Generate 3 years in the past and 3 years in the future */}
+                              {Array.from({ length: 7 }, (_, i) => new Date().getFullYear() - 3 + i).map(year => (
+                                <option key={year} value={year}>{year}</option>
+                              ))}
+                            </select>
+                          </div>
                         </div>
                         <p className="text-xs text-gray-500 mt-1">
-                          Budget period is based on your current period selection.
+                          Select the month and year for this budget.
                         </p>
                       </div>
                       
@@ -782,6 +984,16 @@ const Budgets = () => {
           </div>
         </div>
       )}
+
+      {/* Categories Modal */}
+      <CategoryModal
+        showModal={showCategoryModal}
+        closeModal={() => setShowCategoryModal(false)}
+        categories={categories}
+        onSaveCategory={handleSaveCategory}
+        onDeleteCategory={handleDeleteCategory}
+        type="expense" // Using shared expense categories for income too
+      />
     </div>
   );
 };
@@ -793,34 +1005,21 @@ const getBudgetProgressColor = (ratio) => {
   return 'bg-emerald-500';
 };
 
-// Helper function to get period dates
-const getPeriodDates = (period) => {
-  const now = new Date();
-  let periodStart, periodEnd;
+// Helper function to calculate period start and end dates
+const getPeriodDates = (monthIndex, year) => {
+  // Convert to numbers
+  const month = parseInt(monthIndex);
+  const yearNum = parseInt(year);
   
-  // Parse period string: "April 2025", "Q2 2025", "2025"
-  if (period.includes('Q')) {
-    // Quarterly
-    const [quarter, year] = period.replace('Q', '').split(' ');
-    const quarterStartMonth = (parseInt(quarter) - 1) * 3;
-    periodStart = new Date(parseInt(year), quarterStartMonth, 1);
-    periodEnd = new Date(parseInt(year), quarterStartMonth + 3, 0);
-  } else if (period.match(/^\d{4}$/)) {
-    // Yearly
-    const year = parseInt(period);
-    periodStart = new Date(year, 0, 1);
-    periodEnd = new Date(year, 11, 31);
-  } else {
-    // Monthly
-    const [month, year] = period.split(' ');
-    const monthIndex = getMonthIndex(month);
-    periodStart = new Date(parseInt(year), monthIndex, 1);
-    periodEnd = new Date(parseInt(year), monthIndex + 1, 0);
-  }
+  // Start date is first day of month
+  const periodStart = new Date(yearNum, month, 1);
+  
+  // End date is last day of month
+  const periodEnd = new Date(yearNum, month + 1, 0);
   
   return {
-    periodStart: periodStart.toISOString().split('T')[0],
-    periodEnd: periodEnd.toISOString().split('T')[0]
+    periodStart: periodStart.toISOString().split('T')[0], // Format: YYYY-MM-DD
+    periodEnd: periodEnd.toISOString().split('T')[0] // Format: YYYY-MM-DD
   };
 };
 

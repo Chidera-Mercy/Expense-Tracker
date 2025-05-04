@@ -16,32 +16,39 @@ import {
 } from 'lucide-react';
 import { 
   fetchIncome, 
+  calculateIncomeSummary,
+  fetchCategories,
+  getPeriodOptions,
+  getCurrentPeriod,
+  getPreviousPeriod,
+  getPeriodDates,
   addIncome, 
   updateIncome, 
-  deleteIncome, 
-  getIncomeSummary,
-  getPeriodOptions, 
-  getCurrentPeriod,
-  getNextPeriod,
-  getPreviousPeriod,
-  exportIncomeToCSV 
+  deleteIncome,
+  exportIncomeToCSV
 } from '../db/income.js';
+import CategoryModal from '../components/CategoryModal.jsx';
+import { saveCategory, deleteCategory } from '../db/category.js';
 import { useCurrency } from '../CurrencyContext.jsx';
+import { UserAuth } from '../AuthContext';
 
 
 const Income = () => {
   // State variables
   const {symbol, formatAmount} = useCurrency();
-  const [incomeEntries, setIncomeEntries] = useState([]);
+  const {user} = UserAuth();
+  const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [showAddIncome, setShowAddIncome] = useState(false);
   const [showEditIncome, setShowEditIncome] = useState(false);
+  const [allIncomeEntries, setAllIncomeEntries] = useState([]);
+  const [filteredIncomeEntries, setFilteredIncomeEntries] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [currentStep, setCurrentStep] = useState(1);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
   const [periodType, setPeriodType] = useState('monthly');
   const [currentPeriod, setCurrentPeriod] = useState(getCurrentPeriod('monthly'));
   const [periodOptions, setPeriodOptions] = useState({});;
-  const [searchTimeout, setSearchTimeout] = useState(null);
   const [summary, setSummary] = useState({
     totalIncome: 0,
     recurringIncome: 0,
@@ -49,31 +56,22 @@ const Income = () => {
     averageMonthlyIncome: 0,
     growthPercentage: 0
   });
-  // Form data
+  // Income data
   const [incomeData, setIncomeData] = useState({
     date: new Date().toISOString().split('T')[0],
     source: '',
-    category: '',
+    category_id: '',
     amount: '',
     description: '',
     recurring: false,
     frequency: ''
   });
-  // Filter options
-  const [filterOptions, setFilterOptions] = useState({
-    search: ''
-  });
   // Applied filters
+  const [searchTerm, setSearchTerm] = useState('');
   const [appliedFilters, setAppliedFilters] = useState({
-    ...filterOptions,
     page: 1,
     limit: 10
   });
-  // Income categories
-  const incomeCategories = [
-    'Employment', 'Side Hustle', 'Investment', 'Real Estate', 
-    'Business', 'Gifts', 'Tax Refund', 'Other'
-  ];
   // Frequency options for recurring income
   const frequencyOptions = [
     'Daily', 'Weekly', 'Bi-weekly', 'Monthly', 'Quarterly', 'Annually'
@@ -143,15 +141,15 @@ const Income = () => {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Category <span className="text-red-500">*</span></label>
             <select 
-              name="category"
-              value={incomeData.category}
+              name="category_id"
+              value={incomeData.category_id}
               onChange={handleInputChange}
               required
               className="block w-full border border-gray-300 rounded-md focus:ring-emerald-500 focus:border-emerald-500 py-2 px-3"
             >
               <option value="">Select a category</option>
-              {incomeCategories.map((category) => (
-                <option key={category} value={category}>{category}</option>
+              {categories.map((category) => (
+                <option key={category.id} value={category.id}>{category.name}</option>
               ))}
             </select>
           </div>
@@ -226,7 +224,11 @@ const Income = () => {
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-500">Category:</span>
-                <span className="font-medium">{incomeData.category}</span>
+                <span className="font-medium">
+                  {incomeData.category_id 
+                  ? categories.find(c => c.id === incomeData.category_id)?.name || 'Unknown'
+                  : 'Not specified'}
+                </span>
               </div>
               {incomeData.recurring && (
                 <div className="flex justify-between">
@@ -243,28 +245,29 @@ const Income = () => {
   const [isloading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Fetch income data and summary on component mount and when filters change
+  // Fetch income data and summary on component mount and when period change
   useEffect(() => {
-    fetchIncomeData();
+    loadIncome();
+    loadCategories();
     loadPeriodOptions();
-  }, [currentPeriod, periodType]);
+  }, []);
+  
+  // Filter income when period or periodType changes
   useEffect(() => {
-    fetchIncomeData();
-  }, [appliedFilters]);
+    if (allIncomeEntries.length > 0) {
+      filterIncomeByPeriod();
+    }
+  }, [allIncomeEntries, currentPeriod, periodType]);
 
   // Fetch income data
-  const fetchIncomeData = async () => {
+  const loadIncome = async () => {
     setIsLoading(true);
     try {      
-      const { data, count, page } = await fetchIncome(currentPeriod, appliedFilters);
-      setIncomeEntries(data || []);
+      const { data, count, page } = await fetchIncome(appliedFilters);
+      setAllIncomeEntries(data || []);
       setTotalCount(count || 0);
       setCurrentPage(page);
       
-      // load income summary
-      const summary = await getIncomeSummary(currentPeriod);
-      setSummary(summary)
-
     } catch (error) {
       console.error('Error fetching income data:', error);
       setError("Failed to load budget data. Please try again.");
@@ -272,6 +275,53 @@ const Income = () => {
       setIsLoading(false);
     }
   };
+
+  const loadCategories = async () => {
+    setIsLoading(true);
+    try {
+      const data = await fetchCategories(user.id);
+      setCategories(data);
+
+    } catch (error) {
+      console.error('Error loading initial data:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Filter income based on selected period and calculate summary
+  const filterIncomeByPeriod = () => {
+    let currentData = [];
+    let previousData = [];
+    
+    // Get period dates for current period
+    const { periodStart, periodEnd } = getPeriodDates(currentPeriod);
+    
+    // Get previous period
+    const previousPeriod = getPreviousPeriod(currentPeriod, periodType);
+    const { periodStart: prevStart, periodEnd: prevEnd } = getPeriodDates(previousPeriod);
+    
+    // Filter income for current period
+    currentData = allIncomeEntries.filter(income => {
+      const incomeDate = new Date(income.date);
+      return incomeDate >= new Date(periodStart) && incomeDate <= new Date(periodEnd);
+    });
+    
+    // Filter income for previous period
+    previousData = allIncomeEntries.filter(income => {
+      const incomeDate = new Date(income.date);
+      return incomeDate >= new Date(prevStart) && incomeDate <= new Date(prevEnd);
+    });
+    
+    // Set filtered income for display (current period)
+    setFilteredIncomeEntries(currentData);
+    
+    // Calculate inco e summary using both current and previous data
+    const summary = calculateIncomeSummary(currentData, previousData, currentPeriod, periodType);
+    console.log(summary)
+    setSummary(summary);
+  };
+
 
   // Load period options
   const loadPeriodOptions = () => {
@@ -287,14 +337,20 @@ const Income = () => {
 
   // Navigate to previous period
   const goToPreviousPeriod = () => {
-    const previousPeriod = getPreviousPeriod(currentPeriod, periodType);
-    setCurrentPeriod(previousPeriod);
+    const options = periodOptions[periodType] || [];
+    const currentIndex = options.indexOf(currentPeriod);
+    if (currentIndex > 0) {
+      setCurrentPeriod(options[currentIndex - 1]);
+    }
   };
 
   // Navigate to next period
   const goToNextPeriod = () => {
-    const nextPeriod = getNextPeriod(currentPeriod, periodType);
-    setCurrentPeriod(nextPeriod);
+    const options = periodOptions[periodType] || [];
+    const currentIndex = options.indexOf(currentPeriod);
+    if (currentIndex < options.length - 1) {
+      setCurrentPeriod(options[currentIndex + 1]);
+    }
   };
 
   // Handle input change
@@ -317,24 +373,143 @@ const Income = () => {
     }));
   };
 
-  // Handle search
+  // Handle search input changes
   const handleSearch = (e) => {
-    const searchText = e.target.value;
-    setFilterOptions(prevOptions => ({ ...prevOptions, search: searchText }));
+    const term = e.target.value.toLowerCase();
+    setSearchTerm(term);
     
-    // Clear the previous timeout
-    if (searchTimeout) clearTimeout(searchTimeout);
+    // If search term is empty, show all filtered income for the current period
+    if (!term.trim()) {
+      // Re-run the period filter to reset to the current period view
+      filterIncomeByPeriod();
+      return;
+    }
     
-    // Set new timeout
-    const timeoutId = setTimeout(() => {
-      setAppliedFilters(prevFilters => ({
-        ...prevFilters,
-        search: searchText,
-        page: 1 // Reset to first page when searching
-      }));
-    }, 500);
+    // Get current period data first (maintain period filtering)
+    const { periodStart, periodEnd } = getPeriodDates(currentPeriod);
+    const periodFiltered = allIncomeEntries.filter(income => {
+      const incomeDate = new Date(income.date);
+      return incomeDate >= new Date(periodStart) && incomeDate <= new Date(periodEnd);
+    });
     
-    setSearchTimeout(timeoutId);
+    // Then apply search filtering on top of period filtering
+    const searchFiltered = periodFiltered.filter(income => {
+      // Check if the term matches any of the three fields
+      // Handle potential undefined values safely
+      const categoryMatch = income.categories?.name.toLowerCase().includes(term) || false;
+      const sourceMatch = income.source?.toLowerCase().includes(term) || false;
+      const descriptionMatch = income.description?.toLowerCase().includes(term) || false;
+      
+      return categoryMatch || sourceMatch || descriptionMatch;
+    });
+    
+    // Update the filtered income with search results
+    setFilteredIncomeEntries(searchFiltered);
+  };
+
+  // Handle form submit
+  const handleSubmit = async (e) => {
+    if (e) e.preventDefault();
+    
+    try {
+      setIsLoading(true);
+      
+      // Validate form data
+      if (!incomeData.amount || !incomeData.date || !incomeData.source || !incomeData.category_id) {
+        alert('Please fill all required fields');
+        return;
+      }
+      
+      // If recurring is true but no frequency is selected
+      if (incomeData.recurring && !incomeData.frequency) {
+        alert('Please select a frequency for recurring income');
+        return;
+      }
+      
+      if (showAddIncome) {
+        // Add new income
+        await addIncome(incomeData);
+      } else if (showEditIncome) {
+        // Update existing income
+        await updateIncome(incomeData.id, incomeData);
+      }
+      
+      // Refresh data
+      await loadIncome();
+      filterIncomeByPeriod();
+      
+      // Close modal
+      closeModal();
+      
+    } catch (error) {
+      console.error('Error saving income:', error);
+      alert('Error saving income. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Handle delete
+  const handleDelete = async (id) => {
+    // Confirm delete
+    if (window.confirm('Are you sure you want to delete this income entry?')) {
+      try {
+        setIsLoading(true);
+        await deleteIncome(id);
+        
+        // Refresh data
+        await loadIncome();
+        filterIncomeByPeriod();
+        
+      } catch (error) {
+        console.error('Error deleting income:', error);
+        alert('Error deleting income. Please try again.');
+      } finally {
+        setIsLoading(false);
+      }
+    }
+  };
+
+  const handleSaveCategory = async (categoryData) => {
+    try {
+      const savedCategory = await saveCategory(categoryData, 'income_categories');
+      
+      // Update local state based on whether it's an edit or create
+      if (categoryData.id) {
+        // Update existing category
+        setCategories(prevCategories =>
+          prevCategories.map(cat => 
+            cat.id === savedCategory.id ? savedCategory : cat
+          )
+        );
+      } else {
+        // Add new category
+        setCategories(prevCategories => [...prevCategories, savedCategory]);
+      }
+      
+      return savedCategory;
+    } catch (err) {
+      console.error('Error saving expense category:', err);
+      throw err;
+    }
+  };
+
+  const handleDeleteCategory = async (categoryId) => {
+    try {
+      await deleteCategory(categoryId, 'income_categories');
+      
+      // Remove the deleted category from state
+      setCategories(prevCategories => 
+        prevCategories.filter(cat => cat.id !== categoryId)
+      );
+      // Remove the income entries with deleted category from state
+      setAllIncomeEntries(prevEntries => 
+        prevEntries.filter(income => income.category_id !== categoryId)
+      );
+    } catch (err) {
+      console.error('Error deleting expense category:', err);
+      throw err;
+    }
   };
 
   // Open add income modal
@@ -342,7 +517,7 @@ const Income = () => {
     setIncomeData({
       date: new Date().toISOString().split('T')[0],
       source: '',
-      category: '',
+      category_id: '',
       amount: '',
       description: '',
       recurring: false,
@@ -358,7 +533,7 @@ const Income = () => {
       id: income.id,
       date: income.date,
       source: income.source,
-      category: income.category,
+      category_id: income.category_id,
       amount: income.amount,
       description: income.description || '',
       recurring: income.recurring || false,
@@ -384,67 +559,6 @@ const Income = () => {
     setCurrentStep(prevStep => prevStep - 1);
   };
 
-  // Handle form submit
-  const handleSubmit = async (e) => {
-    if (e) e.preventDefault();
-    
-    try {
-      setIsLoading(true);
-      
-      // Validate form data
-      if (!incomeData.amount || !incomeData.date || !incomeData.source || !incomeData.category) {
-        alert('Please fill all required fields');
-        return;
-      }
-      
-      // If recurring is true but no frequency is selected
-      if (incomeData.recurring && !incomeData.frequency) {
-        alert('Please select a frequency for recurring income');
-        return;
-      }
-      
-      if (showAddIncome) {
-        // Add new income
-        await addIncome(incomeData);
-      } else if (showEditIncome) {
-        // Update existing income
-        await updateIncome(incomeData.id, incomeData);
-      }
-      
-      // Refresh data
-      fetchIncomeData();
-      
-      // Close modal
-      closeModal();
-      
-    } catch (error) {
-      console.error('Error saving income:', error);
-      alert('Error saving income. Please try again.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // Handle delete
-  const handleDelete = async (id) => {
-    // Confirm delete
-    if (window.confirm('Are you sure you want to delete this income entry?')) {
-      try {
-        setIsLoading(true);
-        await deleteIncome(id);
-        
-        // Refresh data
-        fetchIncomeData();
-        
-      } catch (error) {
-        console.error('Error deleting income:', error);
-        alert('Error deleting income. Please try again.');
-      } finally {
-        setIsLoading(false);
-      }
-    }
-  };
-
   // Handle pagination
   const handlePageChange = (newPage) => {
     setAppliedFilters(prevFilters => ({
@@ -454,44 +568,20 @@ const Income = () => {
   };
 
   // Handle export to CSV
-  const handleExport = async () => {
-    try {
-      setIsLoading(true);
-      const csvContent = await exportIncomeToCSV(currentPeriod);
-      
-      // Create blob and download link
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `income_export_${new Date().toISOString().split('T')[0]}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      
-    } catch (error) {
-      console.error('Error exporting income data:', error);
-      alert('Error exporting data. Please try again.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  const handleExport = () => {
 
-
-  // Get income category color
-  const getIncomeCategoryColor = (category) => {
-    const colorMap = {
-      'Employment': 'bg-blue-500',
-      'Side Hustle': 'bg-purple-500',
-      'Investment': 'bg-yellow-500',
-      'Real Estate': 'bg-red-500',
-      'Business': 'bg-indigo-500',
-      'Gifts': 'bg-pink-500',
-      'Tax Refund': 'bg-orange-500',
-      'Other': 'bg-gray-500'
-    };
+    const csvContent = exportIncomeToCSV(filteredIncomeEntries);
     
-    return colorMap[category] || 'bg-gray-500';
+    // Create blob and download link
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `income_export_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+      
   };
 
 return (
@@ -499,17 +589,26 @@ return (
     {/* Header */}
     <header className="bg-white p-6 border-b border-gray-200 shadow-sm">
       <div className="flex justify-between items-center">
-      <h1 className="text-2xl font-bold text-emerald-800">
-        Income
-        <span className="ml-2 text-sm font-normal text-gray-500">Manage your earnings</span>
-      </h1>
-        <button 
-          onClick={openAddIncomeModal}
-          className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-md flex items-center shadow-sm transition-colors duration-200"
-        >
-          <Plus size={18} className="mr-1" />
-          <span>Add Income</span>
-        </button>
+        <h1 className="text-2xl font-bold text-emerald-800">
+          Income
+          <span className="ml-2 text-sm font-normal text-gray-500">Manage your earnings</span>
+        </h1>
+        <div className='flex gap-4'>
+          <button 
+            onClick={openAddIncomeModal}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-md flex items-center shadow-sm transition-colors duration-200"
+          >
+            <Plus size={18} className="mr-1" />
+            <span>Add Income</span>
+          </button>
+          <button 
+            onClick={() => setShowCategoryModal(true)}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-md flex items-center shadow-sm transition-colors duration-200"
+          >
+            <span>Manage Categories</span>
+          </button>
+        </div>
+        
       </div>
     </header>
 
@@ -522,9 +621,16 @@ return (
           <div className="text-sm text-gray-500 mb-1">Total Income ({currentPeriod})</div>
           <div className="text-2xl font-semibold">{formatAmount(summary.totalIncome.toFixed(2))}</div>
           <div className="flex items-center text-sm mt-1">
-            <span className={summary.growthPercentage >= 0 ? "text-green-600" : "text-red-600"}>
-              {summary.growthPercentage >= 0 ? "↑" : "↓"} {Math.abs(summary.growthPercentage).toFixed(1)}% from last month
-            </span>
+          <span className={summary.growthPercentage >= 0 ? "text-green-600" : "text-red-600"}>
+            {summary.growthPercentage >= 0 ? "↑" : "↓"} {Math.abs(summary.growthPercentage).toFixed(1)}% from last{" "}
+            {
+              periodType === "monthly"
+                ? "month"
+                : periodType === "quaterly"
+                ? "quarter"
+                : "year"
+            }
+          </span>
           </div>
         </div>
         
@@ -540,7 +646,13 @@ return (
           <div className="text-sm text-gray-500 mb-1">Average Monthly Income</div>
           <div className="text-2xl font-semibold">{formatAmount(summary.averageMonthlyIncome.toFixed(2))}</div>
           <div className="flex items-center text-sm mt-1 text-gray-500">
-            <span>Based on this period</span>
+            <span>Based on this {" "}
+              {
+                periodType === "quarterly"
+                  ? "quarter"
+                  : "year"
+              }
+            </span>
           </div>
         </div>}
       </div>
@@ -555,7 +667,7 @@ return (
             <input
               type="text"
               placeholder="Search income entries..."
-              value={filterOptions.search}
+              value={searchTerm}
               onChange={handleSearch}
               className="pl-10 pr-4 py-2 w-full border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
             />
@@ -619,7 +731,7 @@ return (
             <div className="flex justify-center items-center h-32">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-500"></div>
             </div>
-          ) : incomeEntries.length === 0 ? (
+          ) : filteredIncomeEntries.length === 0 ? (
             <div className="bg-white rounded-lg shadow-sm p-12 text-center border border-dashed border-gray-300">
               <div className="bg-gray-50 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4">
                 <DollarSign size={30} className="text-gray-400" />
@@ -652,23 +764,13 @@ return (
                       </div>
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider sticky top-0 bg-gray-50 z-10 min-w-[150px]">
-                      <div className="flex items-center cursor-pointer"
-                          onClick={() => {
-                            const newFilters = { ...appliedFilters, sortBy: 'source', sortDir: appliedFilters.sortDir === 'asc' ? 'desc' : 'asc' };
-                            setAppliedFilters(newFilters);
-                          }}>
+                      <div className="flex items-center">
                         Source
-                        <ArrowUpDown size={14} className="ml-1 text-gray-400" />
                       </div>
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider sticky top-0 bg-gray-50 z-10 min-w-[150px]">
-                      <div className="flex items-center cursor-pointer"
-                          onClick={() => {
-                            const newFilters = { ...appliedFilters, sortBy: 'category', sortDir: appliedFilters.sortDir === 'asc' ? 'desc' : 'asc' };
-                            setAppliedFilters(newFilters);
-                          }}>
+                      <div className="flex items-center">
                         Category
-                        <ArrowUpDown size={14} className="ml-1 text-gray-400" />
                       </div>
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider sticky top-0 bg-gray-50 z-10 min-w-[120px]">
@@ -692,7 +794,7 @@ return (
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {incomeEntries.map((income) => (
+                  {filteredIncomeEntries.map((income) => (
                     <tr key={income.id} className="hover:bg-emerald-50 transition-colors duration-150">
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                         {new Date(income.date).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
@@ -702,8 +804,8 @@ return (
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                         <span className="inline-flex items-center">
-                          <span className={`w-2 h-2 rounded-full mr-2 ${getIncomeCategoryColor(income.category)}`}></span>
-                          {income.category}
+                          <span className={`w-2 h-2 rounded-full mr-2 ${income.categories?.color ? 'bg-'+income.categories.color+'-500' : 'bg-gray-500'}`}></span>
+                          {expense.categories?.name || 'Uncategorized'}
                         </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-emerald-600">
@@ -746,7 +848,7 @@ return (
         </div>
         
         {/* Pagination */}
-        {incomeEntries.length > 0 && (
+        {filteredIncomeEntries.length > 0 && (
           <div className="px-4 py-3 bg-white border-t border-gray-200 sm:px-6">
             <div className="flex items-center justify-between">
               <div className="text-sm text-gray-700">
@@ -1013,6 +1115,15 @@ return (
         </div>
       </div>
     )}
+    {/* Categories Modal */}
+    <CategoryModal
+      showModal={showCategoryModal}
+      closeModal={() => setShowCategoryModal(false)}
+      categories={categories}
+      onSaveCategory={handleSaveCategory}
+      onDeleteCategory={handleDeleteCategory}
+      type="income" // Using shared expense categories for income too
+    />
   </div>
 );
 };

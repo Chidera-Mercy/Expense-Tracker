@@ -910,7 +910,7 @@ case 'merchant-analysis':
                     Reports are generated based on your financial data from {startDate} to {endDate}.
                   </p>
                 </div>
-              </div>
+              </div> 
             </div>
             
             {/* Main Content */}

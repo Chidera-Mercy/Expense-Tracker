@@ -1,23 +1,15 @@
 import supabase from "./supabase";
 
 // Fetch all budgets for the current user
-export const fetchBudgets = async (period = null) => {
+export const fetchBudgets = async () => {
   try {
-    let query = supabase
+    const { data, error } = await supabase
       .from('budgets')
       .select(`
         *,
-        categories(id, name, color, icon)
+        categories:category_id (id, name, color)
       `)
       .order('created_at', { ascending: false });
-    
-    // Filter by period if provided
-    if (period) {
-      const { periodStart, periodEnd } = getPeriodDates(period);
-      query = query.gte('period_start', periodStart).lte('period_end', periodEnd);
-    }
-    
-    const { data, error } = await query;
     
     if (error) throw error;
     
@@ -34,15 +26,17 @@ export const fetchBudgets = async (period = null) => {
 // Helper to add spending data to budgets
 const addSpendingToBudgets = async (budgets) => {
   try {
+    if (!budgets.length) return [];
+    
     // Get the unique date range for all budgets
     const minDate = budgets.reduce((min, budget) => 
       budget.period_start < min ? budget.period_start : min, 
-      budgets[0]?.period_start || new Date().toISOString()
+      budgets[0]?.period_start
     );
     
     const maxDate = budgets.reduce((max, budget) => 
       budget.period_end > max ? budget.period_end : max, 
-      budgets[0]?.period_end || new Date().toISOString()
+      budgets[0]?.period_end
     );
     
     // Fetch all expenses in the date range
@@ -119,7 +113,6 @@ export const updateBudget = async (id, budgetData) => {
       .from('budgets')
       .update({
         ...budgetData,
-        user_id: user.id,
         updated_at: new Date().toISOString()
       })
       .eq('id', id)
@@ -149,37 +142,66 @@ export const deleteBudget = async (id) => {
   }
 };
 
-// Helper function to get total budget stats
-export const getBudgetSummary = async (period) => {
-  try {
-    const { data: budgets, error } = await fetchBudgets(period);
-    
-    if (error) throw error;
-    
-    const totalAllocated = budgets.reduce((sum, budget) => sum + parseFloat(budget.amount), 0);
-    const totalSpent = budgets.reduce((sum, budget) => sum + budget.spent, 0);
-    const totalRemaining = totalAllocated - totalSpent;
-    const spendingPercentage = totalAllocated > 0 ? (totalSpent / totalAllocated) * 100 : 0;
-    
-    return {
-      totalAllocated,
-      totalSpent,
-      totalRemaining,
-      spendingPercentage,
-      budgetStatus: getBudgetStatus(spendingPercentage),
-      error: null
-    };
-  } catch (error) {
-    console.error('Error getting budget summary:', error);
-    return {
-      totalAllocated: 0,
-      totalSpent: 0,
-      totalRemaining: 0,
-      spendingPercentage: 0,
-      budgetStatus: 'Unknown',
-      error
-    };
-  }
+// Client-side filtering functions
+
+// Filter budgets for a specific month (format: "April 2025")
+export const filterBudgetsByMonth = (budgets, monthYear) => {
+  const [month, year] = monthYear.split(' ');
+  const monthIndex = getMonthIndex(month);
+  const startDate = new Date(parseInt(year), monthIndex, 1);
+  const endDate = new Date(parseInt(year), monthIndex + 1, 0);
+  
+  const start = startDate.toISOString().split('T')[0];
+  const end = endDate.toISOString().split('T')[0];
+  
+  return budgets.filter(budget => 
+    budget.period_start <= end && budget.period_end >= start
+  );
+};
+
+// Filter budgets for a specific quarter (format: "Q2 2025")
+export const filterBudgetsByQuarter = (budgets, quarterYear) => {
+  const [quarter, year] = quarterYear.replace('Q', '').split(' ');
+  const quarterStartMonth = (parseInt(quarter) - 1) * 3;
+  
+  const startDate = new Date(parseInt(year), quarterStartMonth, 1);
+  const endDate = new Date(parseInt(year), quarterStartMonth + 3, 0);
+  
+  const start = startDate.toISOString().split('T')[0];
+  const end = endDate.toISOString().split('T')[0];
+  
+  return budgets.filter(budget => 
+    budget.period_start <= end && budget.period_end >= start
+  );
+};
+
+// Filter budgets for a specific year (format: "2025")
+export const filterBudgetsByYear = (budgets, year) => {
+  const startDate = new Date(parseInt(year), 0, 1);
+  const endDate = new Date(parseInt(year), 11, 31);
+  
+  const start = startDate.toISOString().split('T')[0];
+  const end = endDate.toISOString().split('T')[0];
+  
+  return budgets.filter(budget => 
+    budget.period_start <= end && budget.period_end >= start
+  );
+};
+
+// Calculate budget summary for filtered budgets
+export const calculateBudgetSummary = (budgets) => {
+  const totalAllocated = budgets.reduce((sum, budget) => sum + parseFloat(budget.amount), 0);
+  const totalSpent = budgets.reduce((sum, budget) => sum + budget.spent, 0);
+  const totalRemaining = totalAllocated - totalSpent;
+  const spendingPercentage = totalAllocated > 0 ? (totalSpent / totalAllocated) * 100 : 0;
+  
+  return {
+    totalAllocated,
+    totalSpent,
+    totalRemaining,
+    spendingPercentage,
+    budgetStatus: getBudgetStatus(spendingPercentage)
+  };
 };
 
 // Helper function to determine budget status
@@ -190,36 +212,7 @@ const getBudgetStatus = (percentage) => {
   return 'Under Budget';
 };
 
-// Helper function to get date range for a period
-export const getPeriodDates = (period) => {
-  const now = new Date();
-  let periodStart, periodEnd;
-  
-  // Parse period string: "April 2025", "Q2 2025", "2025"
-  if (period.includes('Q')) {
-    // Quarterly
-    const [quarter, year] = period.replace('Q', '').split(' ');
-    const quarterStartMonth = (parseInt(quarter) - 1) * 3;
-    periodStart = new Date(parseInt(year), quarterStartMonth, 1);
-    periodEnd = new Date(parseInt(year), quarterStartMonth + 3, 0);
-  } else if (period.match(/^\d{4}$/)) {
-    // Yearly
-    const year = parseInt(period);
-    periodStart = new Date(year, 0, 1);
-    periodEnd = new Date(year, 11, 31);
-  } else {
-    // Monthly
-    const [month, year] = period.split(' ');
-    const monthIndex = getMonthIndex(month);
-    periodStart = new Date(parseInt(year), monthIndex, 1);
-    periodEnd = new Date(parseInt(year), monthIndex + 1, 0);
-  }
-  
-  return {
-    periodStart: periodStart.toISOString().split('T')[0],
-    periodEnd: periodEnd.toISOString().split('T')[0]
-  };
-};
+// Helper functions for date formatting
 
 // Get month index from name
 const getMonthIndex = (monthName) => {
@@ -227,16 +220,16 @@ const getMonthIndex = (monthName) => {
     'January', 'February', 'March', 'April', 'May', 'June', 
     'July', 'August', 'September', 'October', 'November', 'December'
   ];
-  return months.findIndex(m => m.startsWith(monthName));
+  return months.findIndex(m => m.toLowerCase().startsWith(monthName.toLowerCase()));
 };
 
-// Get formatted period options
+// Get formatted period options for UI
 export const getPeriodOptions = () => {
   const now = new Date();
   const currentYear = now.getFullYear();
   const currentMonth = now.getMonth();
   
-  // Generate 6 months before and after current month
+  // Generate monthly options (12 months)
   const monthOptions = [];
   for (let i = -6; i <= 6; i++) {
     const monthDate = new Date(currentYear, currentMonth + i, 1);
@@ -264,48 +257,6 @@ export const getPeriodOptions = () => {
     quarterly: quarterOptions,
     yearly: yearOptions
   };
-};
-
-// Get previous period
-export const getPreviousPeriod = (currentPeriod, periodType = 'monthly') => {
-  if (periodType === 'monthly') {
-    const [month, year] = currentPeriod.split(' ');
-    const monthIndex = getMonthIndex(month);
-    const date = new Date(parseInt(year), monthIndex - 1, 1);
-    return `${date.toLocaleString('default', { month: 'long' })} ${date.getFullYear()}`;
-  } else if (periodType === 'quarterly') {
-    const [quarter, year] = currentPeriod.replace('Q', '').split(' ');
-    const quarterNum = parseInt(quarter);
-    if (quarterNum === 1) {
-      return `Q4 ${parseInt(year) - 1}`;
-    } else {
-      return `Q${quarterNum - 1} ${year}`;
-    }
-  } else if (periodType === 'yearly') {
-    return `${parseInt(currentPeriod) - 1}`;
-  }
-  return currentPeriod;
-};
-
-// Get next period
-export const getNextPeriod = (currentPeriod, periodType = 'monthly') => {
-  if (periodType === 'monthly') {
-    const [month, year] = currentPeriod.split(' ');
-    const monthIndex = getMonthIndex(month);
-    const date = new Date(parseInt(year), monthIndex + 1, 1);
-    return `${date.toLocaleString('default', { month: 'long' })} ${date.getFullYear()}`;
-  } else if (periodType === 'quarterly') {
-    const [quarter, year] = currentPeriod.replace('Q', '').split(' ');
-    const quarterNum = parseInt(quarter);
-    if (quarterNum === 4) {
-      return `Q1 ${parseInt(year) + 1}`;
-    } else {
-      return `Q${quarterNum + 1} ${year}`;
-    }
-  } else if (periodType === 'yearly') {
-    return `${parseInt(currentPeriod) + 1}`;
-  }
-  return currentPeriod;
 };
 
 // Get current period

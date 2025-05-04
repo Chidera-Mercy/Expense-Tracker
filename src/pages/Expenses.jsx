@@ -18,30 +18,35 @@ import {
 
 import { 
   fetchExpenses, 
+  calculateExpenseSummary,
   fetchCategories, 
+  getPeriodOptions,
+  getCurrentPeriod,
+  getPeriodDates,
+  getPreviousPeriod,
   addExpense, 
   updateExpense, 
   deleteExpense,
   uploadReceipt,
-  getExpenseSummary,
-  getPeriodOptions, 
-  getCurrentPeriod,
-  getNextPeriod,
-  getPreviousPeriod,
-  exportExpensesToCSV  
+  exportExpensesToCSV 
 } from '../db/expenses';
 
+import { saveCategory, deleteCategory } from '../db/category';
 import { useCurrency } from '../CurrencyContext';
+import { UserAuth } from '../AuthContext';
 import ReceiptModal from '../components/ReceiptModal';
+import CategoryModal from '../components/CategoryModal';
 
 
 const Expenses = () => {
   // State management
   const {formatAmount, symbol} = useCurrency();
-  const [expenses, setExpenses] = useState([]);
-  const [categories, setCategories] = useState([]);
+  const {user} = UserAuth();
   const [showAddExpense, setShowAddExpense] = useState(false);
   const [showEditExpense, setShowEditExpense] = useState(false);
+  const [allExpenses, setAllExpenses] = useState([]);
+  const [filteredExpenses, setFilteredExpenses] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [editingExpenseId, setEditingExpenseId] = useState(null);
   const [currentStep, setCurrentStep] = useState(1);
   const [currentPage, setCurrentPage] = useState(1);
@@ -49,7 +54,6 @@ const Expenses = () => {
   const [periodType, setPeriodType] = useState('monthly');
   const [currentPeriod, setCurrentPeriod] = useState(getCurrentPeriod('monthly'));
   const [periodOptions, setPeriodOptions] = useState({});
-  const [searchTimeout, setSearchTimeout] = useState(null);
   const [summary, setSummary] = useState({
     totalExpenses: 0,
     recurringExpenses: 0,
@@ -57,7 +61,6 @@ const Expenses = () => {
     averageMonthlyExpenses: 0,
     growthPercentage: 0
   });
-  // Form state
   const [formData, setFormData] = useState({
     amount: '',
     date: new Date().toISOString().split('T')[0],
@@ -67,60 +70,102 @@ const Expenses = () => {
     is_recurring: false,
     receipt: null
   });
-  // Filter options
-  const [filterOptions, setFilterOptions] = useState({
-    search: ''
-  });
   // Applied filters
+  const [searchTerm, setSearchTerm] = useState('');
   const [appliedFilters, setAppliedFilters] = useState({
-    ...filterOptions,
     page: 1,
     limit: 10
   });
-  const [loading, setLoading] = useState(true);  
-
+  const [loading, setLoading] = useState(true);
+  const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [selectedReceiptUrl, setSelectedReceiptUrl] = useState('');
+
+
 
   const openReceiptModal = (receiptUrl) => {
     setSelectedReceiptUrl(receiptUrl);
     setShowReceiptModal(true);
   };
-
   const closeReceiptModal = () => {
     setShowReceiptModal(false);
   };
   
-  // Fetch expenses data and summary on component mount and when filters change
+  // Fetch expenses data and summary on component mount and when period changes
   useEffect(() => {
-    fetchExpensesData();
+    loadExpenses();
+    loadCategories();
     loadPeriodOptions();
-  }, [currentPeriod, periodType]);
-  useEffect(() => {
-    fetchExpensesData();
-  }, [appliedFilters]);
+  }, []);
 
-  // Functions for data fetching
-  const fetchExpensesData = async () => {
+  // Filter expenses when period or periodType changes
+  useEffect(() => {
+    if (allExpenses.length > 0) {
+      filterExpensesByPeriod();
+    }
+  }, [allExpenses, currentPeriod, periodType]);
+
+  // Functions expenses data
+  const loadExpenses = async () => {
     setLoading(true);
     try {
-      
-      const categoriesData = await fetchCategories();
-      setCategories(categoriesData);
 
-      const { data, count, page } = await fetchExpenses(currentPeriod, appliedFilters);
-      setExpenses(data || []);
+      const { data, count, page } = await fetchExpenses(appliedFilters);
+      setAllExpenses(data || []);
       setTotalCount(count || 0);
       setCurrentPage(page);
 
-      // load expense summary
-      const summary = await getExpenseSummary(currentPeriod)
-      setSummary(summary)
     } catch (error) {
       console.error('Error loading initial data:', error);
     } finally {
       setLoading(false);
     }
+  };
+
+  const loadCategories = async () => {
+    setLoading(true);
+    try {
+      const data = await fetchCategories(user.id);
+      setCategories(data);
+
+    } catch (error) {
+      console.error('Error loading initial data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Filter expenses based on selected period and calculate summary
+  const filterExpensesByPeriod = () => {
+    let currentData = [];
+    let previousData = [];
+    
+    // Get period dates for current period
+    const { periodStart, periodEnd } = getPeriodDates(currentPeriod);
+    
+    // Get previous period
+    const previousPeriod = getPreviousPeriod(currentPeriod, periodType);
+    const { periodStart: prevStart, periodEnd: prevEnd } = getPeriodDates(previousPeriod);
+    
+    // Filter expenses for current period
+    currentData = allExpenses.filter(expense => {
+      const expenseDate = new Date(expense.date);
+      return expenseDate >= new Date(periodStart) && expenseDate <= new Date(periodEnd);
+    });
+    
+    // Filter expenses for previous period
+    previousData = allExpenses.filter(expense => {
+      const expenseDate = new Date(expense.date);
+      return expenseDate >= new Date(prevStart) && expenseDate <= new Date(prevEnd);
+    });
+    
+    // Set filtered expenses for display (current period)
+    setFilteredExpenses(currentData);
+    
+    // Calculate expense summary using both current and previous data
+    const summary = calculateExpenseSummary(currentData, previousData, currentPeriod, periodType);
+    console.log(summary)
+    setSummary(summary);
   };
 
   // Load period options
@@ -137,14 +182,20 @@ const Expenses = () => {
 
   // Navigate to previous period
   const goToPreviousPeriod = () => {
-    const previousPeriod = getPreviousPeriod(currentPeriod, periodType);
-    setCurrentPeriod(previousPeriod);
+    const options = periodOptions[periodType] || [];
+    const currentIndex = options.indexOf(currentPeriod);
+    if (currentIndex > 0) {
+      setCurrentPeriod(options[currentIndex - 1]);
+    }
   };
 
   // Navigate to next period
   const goToNextPeriod = () => {
-    const nextPeriod = getNextPeriod(currentPeriod, periodType);
-    setCurrentPeriod(nextPeriod);
+    const options = periodOptions[periodType] || [];
+    const currentIndex = options.indexOf(currentPeriod);
+    if (currentIndex < options.length - 1) {
+      setCurrentPeriod(options[currentIndex + 1]);
+    }
   };
 
   // Handlers for the expense form
@@ -168,26 +219,6 @@ const Expenses = () => {
       });
     }
   };
-
-  // Handle search
-  const handleSearch = (e) => {
-    const searchText = e.target.value;
-    setFilterOptions(prevOptions => ({ ...prevOptions, search: searchText }));
-    
-    // Clear the previous timeout
-    if (searchTimeout) clearTimeout(searchTimeout);
-    
-    // Set new timeout
-    const timeoutId = setTimeout(() => {
-      setAppliedFilters(prevFilters => ({
-        ...prevFilters,
-        search: searchText,
-        page: 1 // Reset to first page when searching
-      }));
-    }, 500);
-    
-    setSearchTimeout(timeoutId);
-  };
   
   // Handle edit expense
   const handleEditExpense = (expense) => {
@@ -204,7 +235,6 @@ const Expenses = () => {
     setCurrentStep(1);
     setShowEditExpense(true);
   };
-  
   
   const handleNextStep = () => {
     setCurrentStep(currentStep + 1);
@@ -232,6 +262,40 @@ const Expenses = () => {
     setShowAddExpense(false);
     setShowEditExpense(false);
     resetForm();
+  };
+
+  // Handle search input changes
+  const handleSearch = (e) => {
+    const term = e.target.value.toLowerCase();
+    setSearchTerm(term);
+    
+    // If search term is empty, show all filtered expenses for the current period
+    if (!term.trim()) {
+      // Re-run the period filter to reset to the current period view
+      filterExpensesByPeriod();
+      return;
+    }
+    
+    // Get current period data first (maintain period filtering)
+    const { periodStart, periodEnd } = getPeriodDates(currentPeriod);
+    const periodFiltered = allExpenses.filter(expense => {
+      const expenseDate = new Date(expense.date);
+      return expenseDate >= new Date(periodStart) && expenseDate <= new Date(periodEnd);
+    });
+    
+    // Then apply search filtering on top of period filtering
+    const searchFiltered = periodFiltered.filter(expense => {
+      // Check if the term matches any of the three fields
+      // Handle potential undefined values safely
+      const categoryMatch = expense.categories?.name?.toLowerCase().includes(term) || false;
+      const merchantMatch = expense.merchant?.toLowerCase().includes(term) || false;
+      const descriptionMatch = expense.description?.toLowerCase().includes(term) || false;
+      
+      return categoryMatch || merchantMatch || descriptionMatch;
+    });
+    
+    // Update the filtered expenses with search results
+    setFilteredExpenses(searchFiltered);
   };
   
   const handleSubmit = async (e) => {
@@ -272,8 +336,8 @@ const Expenses = () => {
       }
 
       // Refresh data
-      fetchExpensesData();
-      
+      await loadExpenses();
+      filterExpensesByPeriod();
       // Close modal and reset form
       closeModal();
       
@@ -294,7 +358,8 @@ const Expenses = () => {
         await deleteExpense(expenseId);
         
         // Refresh data
-        fetchExpensesData();
+        await loadExpenses();
+        filterExpensesByPeriod();
       
       } catch (error) {
         console.error('Error deleting expense:', error);
@@ -311,6 +376,48 @@ const Expenses = () => {
       ...prevFilters,
       page: newPage
     }));
+  };
+
+  const handleSaveCategory = async (categoryData) => {
+    try {
+      const savedCategory = await saveCategory(categoryData, 'categories');
+      
+      // Update local state based on whether it's an edit or create
+      if (categoryData.id) {
+        // Update existing category
+        setCategories(prevCategories =>
+          prevCategories.map(cat => 
+            cat.id === savedCategory.id ? savedCategory : cat
+          )
+        );
+      } else {
+        // Add new category
+        setCategories(prevCategories => [...prevCategories, savedCategory]);
+      }
+      
+      return savedCategory;
+    } catch (err) {
+      console.error('Error saving expense category:', err);
+      throw err;
+    }
+  };
+
+  const handleDeleteCategory = async (categoryId) => {
+    try {
+      await deleteCategory(categoryId, 'categories');
+      
+      // Remove the deleted category from state
+      setCategories(prevCategories => 
+        prevCategories.filter(cat => cat.id !== categoryId)
+      );
+      // Remove the expenses with deleted category from state
+      setAllExpenses(prevExpenses => 
+        prevExpenses.filter(expense => expense.category_id !== categoryId)
+      );
+    } catch (err) {
+      console.error('Error deleting expense category:', err);
+      throw err;
+    }
   };
   
   // Extract form steps into separate components for readability
@@ -524,27 +631,20 @@ const Expenses = () => {
   ];
 
   // Handle export to CSV
-  const handleExport = async () => {
-    try {
-      setLoading(true);
-      const csvContent = await exportExpensesToCSV(currentPeriod);
+  const handleExport = () => {
+    
+    const csvContent = exportExpensesToCSV(filteredExpenses);
       
-      // Create blob and download link
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `expense_export_${new Date().toISOString().split('T')[0]}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+    // Create blob and download link
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `expense_export_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
       
-    } catch (error) {
-      console.error('Error exporting expense data:', error);
-      alert('Error exporting data. Please try again.');
-    } finally {
-      setLoading(false);
-    }
   };
   
   return (
@@ -556,13 +656,22 @@ const Expenses = () => {
             Expenses
             <span className="ml-2 text-sm font-normal text-gray-500">Manage your spending</span>
           </h1>
-          <button 
-            onClick={() => setShowAddExpense(true)}
-            className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-md flex items-center shadow-sm transition-colors duration-200"
-          >
-            <Plus size={18} className="mr-1" />
-            <span>Add Expense</span>
-          </button>
+          <div className='flex gap-4'>
+            <button 
+              onClick={() => setShowAddExpense(true)}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-md flex items-center shadow-sm transition-colors duration-200"
+            >
+              <Plus size={18} className="mr-1" />
+              <span>Add Expense</span>
+            </button>
+            <button 
+              onClick={() => setShowCategoryModal(true)}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-md flex items-center shadow-sm transition-colors duration-200"
+            >
+              <span>Manage Categories</span>
+            </button>
+          </div>
+          
         </div>
       </header>
 
@@ -579,7 +688,14 @@ const Expenses = () => {
               <div className="text-2xl font-semibold">{formatAmount(summary.totalExpenses.toFixed(2))}</div>
               <div className="flex items-center text-sm mt-1">
                 <span className={summary.growthPercentage >= 0 ? "text-green-600" : "text-red-600"}>
-                  {summary.growthPercentage >= 0 ? "↑" : "↓"} {Math.abs(summary.growthPercentage).toFixed(1)}% from last month
+                  {summary.growthPercentage >= 0 ? "↑" : "↓"} {Math.abs(summary.growthPercentage).toFixed(1)}% from last {" "}
+                  {
+                    periodType === "monthly"
+                      ? "month"
+                      : periodType === "quaterly"
+                      ? "quarter"
+                      : "year"
+                  }
                 </span>
               </div>
             </div>
@@ -596,13 +712,19 @@ const Expenses = () => {
               <div className="text-sm text-gray-500 mb-1">Average Monthly Expenses</div>
               <div className="text-2xl font-semibold">{formatAmount(summary.averageMonthlyExpenses.toFixed(2))}</div>
               <div className="flex items-center text-sm mt-1 text-gray-500">
-                <span>Based on this period</span>
+                <span>Based on this {" "}
+                  {
+                    periodType === "quarterly"
+                      ? "quarter"
+                      : "year"
+                  }
+                </span>
               </div>
             </div>}
           </div>
         )}
 
-        {/* Filters and search */}
+        {/* Periods and search */}
         <div className="bg-white rounded-lg shadow-sm p-5 mb-6 border border-gray-100">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div className="relative flex-grow max-w-md">
@@ -611,7 +733,7 @@ const Expenses = () => {
               </div>
               <input
                 type="text"
-                value={filterOptions.search}
+                value={searchTerm}
                 onChange={handleSearch}
                 placeholder="Search expenses..."
                 className="pl-10 pr-4 py-2 w-full border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
@@ -676,7 +798,7 @@ const Expenses = () => {
               <div className="flex justify-center items-center h-32">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-500"></div>
               </div>
-            ) : expenses.length === 0 ? (
+            ) : filteredExpenses.length === 0 ? (
               <div className="bg-white rounded-lg shadow-sm p-12 text-center border border-dashed border-gray-300">
                 <div className="bg-gray-50 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4">
                   <AlertCircle size={30} className="text-gray-400" />
@@ -709,23 +831,13 @@ const Expenses = () => {
                         </div>
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider sticky top-0 bg-gray-50 z-10 min-w-[150px]">
-                        <div className="flex items-center cursor-pointer"
-                            onClick={() => {
-                              const newFilters = { ...appliedFilters, sortBy: 'merchant', sortDir: appliedFilters.sortDir === 'asc' ? 'desc' : 'asc' };
-                              setAppliedFilters(newFilters);
-                            }}>
+                        <div className="flex items-center">
                           Merchant
-                          <ArrowUpDown size={14} className="ml-1 text-gray-400" />
                         </div>
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider sticky top-0 bg-gray-50 z-10 min-w-[150px]">
-                        <div className="flex items-center cursor-pointer"
-                            onClick={() => {
-                              const newFilters = { ...appliedFilters, sortBy: 'category', sortDir: appliedFilters.sortDir === 'asc' ? 'desc' : 'asc' };
-                              setAppliedFilters(newFilters);
-                            }}>
+                        <div className="flex items-center">
                           Category
-                          <ArrowUpDown size={14} className="ml-1 text-gray-400" />
                         </div>
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider sticky top-0 bg-gray-50 z-10 min-w-[120px]">
@@ -754,7 +866,7 @@ const Expenses = () => {
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {expenses.map((expense) => (
+                    {filteredExpenses.map((expense) => (
                       <tr key={expense.id} className="hover:bg-emerald-50 transition-colors duration-150">
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                           {formatDate(expense.date)}
@@ -830,7 +942,7 @@ const Expenses = () => {
           </div>
           
           {/* Pagination */}
-          {expenses.length > 0 && (
+          {filteredExpenses.length > 0 && (
             <div className="px-4 py-3 bg-white border-t border-gray-200 sm:px-6">
               <div className="flex items-center justify-between">
                 <div className="text-sm text-gray-700">
@@ -1097,6 +1209,16 @@ const Expenses = () => {
           </div>
         </div>
       )}
+
+      {/* Categories Modal */}
+      <CategoryModal
+        showModal={showCategoryModal}
+        closeModal={() => setShowCategoryModal(false)}
+        categories={categories}
+        onSaveCategory={handleSaveCategory}
+        onDeleteCategory={handleDeleteCategory}
+        type="expense" // Using shared expense categories for budget too
+      />
     </div>
   );
 };
@@ -1112,5 +1234,6 @@ const formatDate = (dateString) => {
     day: 'numeric'
   });
 };
+
 
 export default Expenses;
