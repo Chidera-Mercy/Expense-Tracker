@@ -4,9 +4,5 @@ import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  base: '/', // Explicitly set the base path
-  build: {
-    outDir: 'dist',
-    emptyOutDir: true,
-  }
+  base: process.env.VITE_BASE_PATH || "/Expense-Tracker",
 })
