@@ -6,7 +6,7 @@ export default function FAQSection() {
     const faqs = [
       {
         question: "What is PennyPath?",
-        answer: "PennyPath is a completely free expense tracking application that helps individuals and teams manage their finances. Track expenses, create budgets, and gain insights into your spending habits."
+        answer: "PennyPath is a completely free expense tracking application that helps individuals their finances. Track expenses, create budgets, and gain insights into your spending habits."
       },
       {
         question: "Is PennyPath really free?",
@@ -18,7 +18,7 @@ export default function FAQSection() {
       },
       {
         question: "How do I upload expenses?",
-        answer: "You can add expenses through our web interface, mobile app, or by forwarding receipts to receipts@pennypath.com. We also support manual entry and bulk imports."
+        answer: "You can add expenses through our web interface. For now we also support manual entry."
       },
       {
         question: "How quickly can I get set up?",
@@ -31,13 +31,13 @@ export default function FAQSection() {
     ];
     
     return (
-      <div className="py-16 px-6 bg-emerald-950">
+      <div className="py-16 px-6 bg-emerald-900">
         <div className="max-w-4xl mx-auto">
           <h2 className="text-4xl font-bold text-center mb-12">FAQ</h2>
           
           <div className="space-y-4">
             {faqs.map((faq, index) => (
-              <div key={index} className="bg-emerald-900 rounded-lg overflow-hidden">
+              <div key={index} className="bg-emerald-950 rounded-lg overflow-hidden">
                 <button 
                   className="w-full text-left p-6 flex justify-between items-center"
                   onClick={() => setOpenFaq(openFaq === index ? null : index)}

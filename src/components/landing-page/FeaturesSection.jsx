@@ -16,13 +16,13 @@ export default function FeaturesSection() {
             <FeatureCard 
               icon="🧾" 
               title="Receipt tracking" 
-              description="Scan receipts via mobile app and auto-record vendor, date, and amount." 
+              description="Upload receipts of different expenses, so you never lose them" 
             />
             
             <FeatureCard 
               icon="📊" 
               title="Expense reports" 
-              description="Create and share detailed reports to understand your spending habits." 
+              description="Create detailed reports to understand your spending habits." 
             />
             
             <FeatureCard 
@@ -35,12 +35,6 @@ export default function FeaturesSection() {
               icon="💬" 
               title="Expense reminders" 
               description="Get notifications for recurring bills and expenses to never miss a payment." 
-            />
-            
-            <FeatureCard 
-              icon="📱" 
-              title="Mobile experience" 
-              description="Track expenses on-the-go with our fully-featured mobile app." 
             />
           </div>
         </div>
